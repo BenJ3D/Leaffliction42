@@ -1,10 +1,10 @@
 import os
 import argparse
-from PIL import Image, ImageEnhance
+from PIL import Image
 
 def augment_image(image, augmentations):
-    #Applique l'ensemble des transformations définies et retourne un dictionnaire
-    #regroupant le nom de la transformation et l'image augmentée.
+    # Applique l'ensemble des transformations définies et retourne un dictionnaire
+    # regroupant le nom de la transformation et l'image augmentée.
     augmented_images = {}
     for name, func in augmentations:
         try:
@@ -14,15 +14,15 @@ def augment_image(image, augmentations):
     return augmented_images
 
 def flip(img):
-    """Retourne l'image retournée horizontalement."""
+    # Retourne l'image retournée horizontalement
     return img.transpose(Image.FLIP_LEFT_RIGHT)
 
 def rotate(img):
-    """Retourne l'image pivotée de 90°."""
+    #Retourne l'image pivotée de 90°
     return img.rotate(90, expand=True)
 
 def skew(img):
-    """Applique une transformation affine pour skewer l'image sur l'axe X."""
+    # Applique une transformation affine pour skewer l'image sur l'axe X.
     skew_factor = 0.3
     w, h = img.size
     return img.transform(
@@ -33,7 +33,7 @@ def skew(img):
     )
 
 def shear(img):
-    """Applique une transformation affine pour shearrer l'image sur l'axe Y."""
+    # Applique une transformation affine pour shearrer l'image sur l'axe Y.
     shear_factor = 0.3
     w, h = img.size
     return img.transform(
@@ -44,15 +44,15 @@ def shear(img):
     )
 
 def crop(img):
-    """Retourne l'image recadrée en retirant 10 % des bords."""
+    # Retourne l'image recadrée en retirant 10 % des bords.
     w, h = img.size
     margin_w, margin_h = int(w * 0.1), int(h * 0.1)
     return img.crop((margin_w, margin_h, w - margin_w, h - margin_h))
 
 def distortion(img):
-    """Applique une légère distorsion de l'image à l'aide d'une transformation QUAD."""
+    #Applique une légère distorsion de l'image
     w, h = img.size
-    # Définir des décalages pour chaque coin (10% de la taille de l'image)
+    # Définir des décalages pour chaque coin
     offset_w, offset_h = int(w * 0.1), int(h * 0.1)
     # Coordonnées cibles pour chaque coin
     quad = (
@@ -64,10 +64,6 @@ def distortion(img):
     return img.transform((w, h), Image.QUAD, quad, resample=Image.BICUBIC)
 
 def get_augmentations():
-    """
-    Retourne la liste des tuples (nom, fonction) définissant les augmentations à appliquer.
-    Noms conformes à l'exemple du sujet.
-    """
     return [
         ("Flip", flip),
         ("Rotate", rotate),
@@ -76,42 +72,6 @@ def get_augmentations():
         ("Crop", crop),
         ("Distortion", distortion)
     ]
-
-def augment_dataset(input_directory, output_directory):
-    if not os.path.isdir(input_directory):
-        print(f"Le répertoire d'entrée {input_directory} n'existe pas.")
-        return
-
-    # Création du répertoire de sortie s'il n'existe pas déjà
-    os.makedirs(output_directory, exist_ok=True)
-
-    augmentations = get_augmentations()
-    total_augmented = 0
-
-    # Pour chaque catégorie (sous-dossier) du dataset
-    for category in os.listdir(input_directory):
-        category_input_path = os.path.join(input_directory, category)
-        category_output_path = os.path.join(output_directory, category)
-        if os.path.isdir(category_input_path):
-            os.makedirs(category_output_path, exist_ok=True)
-            # On récupère les images (extensions jpg/jpeg/png)
-            images = [f for f in os.listdir(category_input_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-            for img_name in images:
-                img_path = os.path.join(category_input_path, img_name)
-                try:
-                    with Image.open(img_path) as img:
-                        # Appliquer toutes les augmentations définies
-                        augment_results = augment_image(img, augmentations)
-                        base_name, ext = os.path.splitext(img_name)
-                        # Optionnel : sauvegarder éventuellement l'image originale
-                        # img.save(os.path.join(category_output_path, f"{base_name}_original{ext}"))
-                        for aug_name, aug_img in augment_results.items():
-                            output_file = os.path.join(category_output_path, f"{base_name}_{aug_name}{ext}")
-                            aug_img.save(output_file)
-                            total_augmented += 1
-                except Exception as e:
-                    print(f"Erreur lors du traitement de l'image {img_path}: {e}")
-    print(f"Augmentation terminée. Total d'images générées : {total_augmented}")
 
 def augment_image_file(input_file, output_directory=None):
     if not os.path.isfile(input_file):
@@ -141,14 +101,108 @@ def augment_image_file(input_file, output_directory=None):
     except Exception as e:
         print(f"Erreur lors de l'ouverture de l'image {input_file} : {e}")
 
+def augment_dataset(input_directory, output_directory):
+    if not os.path.isdir(input_directory):
+        print(f"Le répertoire d'entrée {input_directory} n'existe pas.")
+        return
+
+    os.makedirs(output_directory, exist_ok=True)
+    augmentations = get_augmentations()
+    total_augmented = 0
+
+    # Pour chaque catégorie (sous-dossier) du dataset
+    for category in os.listdir(input_directory):
+        category_input_path = os.path.join(input_directory, category)
+        category_output_path = os.path.join(output_directory, category)
+        if os.path.isdir(category_input_path):
+            os.makedirs(category_output_path, exist_ok=True)
+            # On récupère les images (extensions jpg/jpeg/png)
+            images = [f for f in os.listdir(category_input_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            for img_name in images:
+                img_path = os.path.join(category_input_path, img_name)
+                try:
+                    with Image.open(img_path) as img:
+                        augment_results = augment_image(img, augmentations)
+                        base_name, ext = os.path.splitext(img_name)
+                        for aug_name, aug_img in augment_results.items():
+                            output_file = os.path.join(category_output_path, f"{base_name}_{aug_name}{ext}")
+                            aug_img.save(output_file)
+                            total_augmented += 1
+                except Exception as e:
+                    print(f"Erreur lors du traitement de l'image {img_path}: {e}")
+    print(f"Augmentation terminée. Total d'images générées : {total_augmented}")
+
+def augment_dataset_balanced(input_directory, output_directory):
+
+    # Traite l'ensemble du dataset par catégories et augmente les images de chaque catégorie de sorte
+    # que chaque catégorie atteigne un nombre d'images égal au maximum trouvé parmi les catégories.
+    # Les images sont générées en appliquant les augmentations de manière cyclique.
+
+    if not os.path.isdir(input_directory):
+        print(f"Le répertoire d'entrée {input_directory} n'existe pas.")
+        return
+
+    os.makedirs(output_directory, exist_ok=True)
+    categories = {}
+
+    # Listing des catégories et de leurs images (extensions jpg/jpeg/png)
+    for category in os.listdir(input_directory):
+        category_path = os.path.join(input_directory, category)
+        if os.path.isdir(category_path):
+            images = [f for f in os.listdir(category_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if images:
+                categories[category] = images
+
+    if not categories:
+        print("Aucune catégorie trouvée dans le dataset.")
+        return
+
+    # Déterminer la cible : le nombre maximum d'images parmi les catégories
+    target = max(len(imgs) for imgs in categories.values())
+
+    augmentations = get_augmentations()
+    print(f"Nombre d'images cible par catégorie : {target}")
+
+    # Pour chaque catégorie, compléter jusqu'à atteindre le nombre cible
+    for category, images in categories.items():
+        category_input_path = os.path.join(input_directory, category)
+        category_output_path = os.path.join(output_directory, category)
+        os.makedirs(category_output_path, exist_ok=True)
+        current_count = len(images)
+        needed = target - current_count
+        print(f"Catégorie '{category}': {current_count} images existantes, besoin de {needed} images augmentées.")
+
+        img_index = 0  # pour parcourir les images existantes cycliquement
+        aug_index = 0  # pour choisir les augmentations de façon cyclique
+        while needed > 0:
+            img_name = images[img_index % len(images)]
+            img_path = os.path.join(category_input_path, img_name)
+            try:
+                with Image.open(img_path) as img:
+                    # Sélection cyclique de l'augmentation
+                    aug_name, func = augmentations[aug_index % len(augmentations)]
+                    aug_img = func(img)
+                    base_name, ext = os.path.splitext(img_name)
+                    # Pour éviter les collisions de noms, on ajoute un index complémentaire
+                    output_file = os.path.join(category_output_path, f"{base_name}_{aug_name}_{aug_index // len(augmentations)}{ext}")
+                    aug_img.save(output_file)
+                    needed -= 1
+                    aug_index += 1
+            except Exception as e:
+                print(f"Erreur lors du traitement de l'image {img_path} : {e}")
+            img_index += 1
+        print(f"Catégorie '{category}' équilibrée à {target} images.")
+
+    print("Augmentation équilibrée terminée.")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Applique plusieurs transformations sur une image unique."
+        description="Applique plusieurs transformations sur une image unique ou sur l'ensemble d'un dataset."
     )
     parser.add_argument(
-        "input_file",
+        "input_path",
         type=str,
-        help="Chemin vers l'image à augmenter"
+        help="Chemin vers l'image à augmenter OU vers le répertoire contenant les catégories d'images si '--all' est spécifié."
     )
     parser.add_argument(
         "--output_directory",
@@ -156,5 +210,25 @@ if __name__ == "__main__":
         default=None,
         help="(Optionnel) Dossier où enregistrer les images augmentées"
     )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Si précisé, traite l'ensemble du dataset (input_path doit alors être un répertoire) et équilibre les catégories."
+    )
     args = parser.parse_args()
-    augment_image_file(args.input_file, args.output_directory)
+
+    if args.all:
+        # En mode dataset, input_path doit être un répertoire
+        if not os.path.isdir(args.input_path):
+            print("Erreur : en mode '--all', le chemin d'entrée doit être un répertoire.")
+        else:
+            # Si aucun dossier de sortie n'est défini, on crée un dossier 'augmented' à côté du répertoire source
+            output_directory = args.output_directory or os.path.join(os.path.dirname(args.input_path), "augmented")
+            augment_dataset_balanced(args.input_path, output_directory)
+    else:
+        # Sinon, traiter le fichier unique
+        if os.path.isdir(args.input_path):
+            print("Erreur : pour traiter un seul fichier, veuillez spécifier directement le chemin de l'image ou utiliser '--all' pour un dataset.")
+        else:
+            output_directory = args.output_directory  # peut être None
+            augment_image_file(args.input_path, output_directory)
