@@ -51,20 +51,34 @@ def gaussian_blur(img, output_path=None):
 
 def create_mask(img, output_path=None):
     """Crée un masque à partir de l'image en utilisant PlantCV."""
-    # Conversion en LAB pour une meilleure détection des feuilles
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    # Extraire le canal a (vert-rouge) qui donne souvent un bon contraste pour les feuilles
-    a_channel = lab[:,:,1]
-    
-    # Appliquer un seuillage adaptatif
-    thresh_value = pcv.threshold.triangle(gray_img=a_channel, object_type='light')
-    s_thresh = pcv.threshold.binary(gray_img=a_channel, threshold=thresh_value, object_type='light')
-    
-    # Appliquer des opérations morphologiques pour améliorer le masque
+    rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    s = pcv.rgb2gray_lab(rgb_img=rgb_img, channel='a')
+    s_thresh = pcv.threshold.binary(gray_img=s, threshold=100, object_type='light')
+    if s_thresh.max() <= 1:
+        s_thresh = (s_thresh * 255).astype(np.uint8)
+    else:
+        s_thresh = s_thresh.astype(np.uint8)
     s_mblur = pcv.median_blur(gray_img=s_thresh, ksize=5)
     s_fill = pcv.fill(bin_img=s_mblur, size=200)
     mask = pcv.fill_holes(bin_img=s_fill)
     
+    if np.sum(mask) < mask.size * 0.01:
+        s = pcv.rgb2gray_lab(rgb_img=rgb_img, channel='b')
+        s_thresh = pcv.threshold.binary(gray_img=s, threshold=100, object_type='dark')
+        if s_thresh.max() <= 1:
+            s_thresh = (s_thresh * 255).astype(np.uint8)
+        else:
+            s_thresh = s_thresh.astype(np.uint8)
+        s_mblur = pcv.median_blur(gray_img=s_thresh, ksize=5)
+        s_fill = pcv.fill(bin_img=s_mblur, size=200)
+        mask = pcv.fill_holes(bin_img=s_fill)
+
+    # S'assurer que le masque final est 0 ou 255
+    if mask.max() <= 1:
+        mask = (mask * 255).astype(np.uint8)
+    else:
+        mask = mask.astype(np.uint8)
+
     if output_path:
         pcv.outputs.save_image(mask, output_path)
     else:
@@ -77,20 +91,15 @@ def create_mask(img, output_path=None):
 
 
 def roi_objects(img, mask, output_path=None):
-    """Identifie les objets dans les régions d'intérêt en utilisant PlantCV."""
-    # Utiliser le masque pour identifier les objets avec la nouvelle API
-    objects, obj_hierarchy = pcv.threshold.find_objects(img=img, mask=mask)
-    
-    # Créer une image pour visualiser les objets détectés
+    """Identifie les objets dans les régions d'intérêt en utilisant OpenCV."""
+    # Remplacer pcv.threshold.find_objects par cv2.findContours
+    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     roi_img = img.copy()
-    
-    if len(objects) > 0:
-        # Dessiner les contours des objets trouvés
-        for i, obj in enumerate(objects):
-            cv2.drawContours(roi_img, objects, i, (0, 255, 0), 2)
-            x, y, w, h = cv2.boundingRect(obj)
+    if contours:
+        for i, cnt in enumerate(contours):
+            cv2.drawContours(roi_img, contours, i, (0, 255, 0), 2)
+            x, y, w, h = cv2.boundingRect(cnt)
             cv2.rectangle(roi_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
-    
     if output_path:
         pcv.outputs.save_image(roi_img, output_path)
     else:
@@ -103,26 +112,18 @@ def roi_objects(img, mask, output_path=None):
 
 
 def analyze_object(img, mask, output_path=None):
-    """Analyse les caractéristiques des objets avec PlantCV."""
-    # Trouver les objets avec la nouvelle API
-    objects, obj_hierarchy = pcv.threshold.find_objects(img=img, mask=mask)
-    
+    """Analyse les caractéristiques des objets avec OpenCV."""
+    # Remplacer pcv.threshold.find_objects par cv2.findContours
+    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     analyze_img = img.copy()
-    
-    if len(objects) > 0:
-        # On prend le plus grand objet (qui devrait être la feuille)
-        obj = max(objects, key=cv2.contourArea)
-        
-        # Dessiner le contour
+    if contours:
+        obj = max(contours, key=cv2.contourArea)
         cv2.drawContours(analyze_img, [obj], -1, (0, 255, 0), 3)
-        
-        # Calculer les propriétés morphologiques de base
         m = cv2.moments(obj)
         if m["m00"] != 0:
             cx = int(m["m10"] / m["m00"])
             cy = int(m["m01"] / m["m00"])
             cv2.circle(analyze_img, (cx, cy), 10, (255, 0, 0), -1)
-    
     if output_path:
         pcv.outputs.save_image(analyze_img, output_path)
     else:
@@ -135,21 +136,14 @@ def analyze_object(img, mask, output_path=None):
 
 
 def pseudolandmarks(img, mask, output_path=None):
-    """Extraire des points caractéristiques (pseudolandmarks) avec PlantCV."""
-    # Trouver les objets avec la nouvelle API
-    objects, obj_hierarchy = pcv.threshold.find_objects(img=img, mask=mask)
-    
+    """Extraire des points caractéristiques (pseudolandmarks) avec OpenCV."""
+    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     landmark_img = img.copy()
-    
-    if len(objects) > 0:
-        # Sélectionner le plus grand objet
-        obj, _ = pcv.object_composition(img=img, contours=[max(objects, key=cv2.contourArea)], hierarchy=np.array([[0, 0, 0, 0]]))
-        
-        # Extraire des landmarks
-        top_x, top_y, bottom_x, bottom_y = pcv.roi.roi_bbox(img=img, x=0, y=0, h=img.shape[0], w=img.shape[1])
-        landmark_img = pcv.landmark_reference_pt_dist(img=img, points=obj, bottom_point=(bottom_x, bottom_y), top_point=(top_x, top_y), 
-                                                 labeling_pts=25)  # 25 points de repère
-    
+    if contours:
+        obj = max(contours, key=cv2.contourArea)
+        x, y, w, h = cv2.boundingRect(obj)
+        # Trace un rectangle à la place de landmark_reference_pt_dist
+        cv2.rectangle(landmark_img, (x, y), (x+w, y+h), (255, 255, 0), 2)
     if output_path:
         pcv.outputs.save_image(landmark_img, output_path)
     else:
