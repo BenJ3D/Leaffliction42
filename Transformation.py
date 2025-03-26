@@ -52,40 +52,63 @@ def gaussian_blur(img, output_path=None):
 
 def create_mask(img, output_path=None):
     """
-    Crée un masque binaire à partir de l'image, en exploitant la luminosité (Value) en HSV.
-    Puis applique des opérations morphologiques (érosion/dilatation) pour améliorer le masque.
+    Crée un masque binaire à partir de l'image, en exploitant la saturation (s) en HSV.
+    Puis applique des opérations morphologiques pour améliorer le masque.
     """
-    # 1) Convertir l'image BGR -> HSV
-    # img_blur = pcv.gaussian_blur(img=img, ksize=(12, 12), sigma_x=0, sigma_y=None)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
+    # Conversion en HSV et extraction du canal de saturation
+    s = pcv.rgb2gray_hsv(img, 's')
     
-
-    _, mask = cv2.threshold(v, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # Seuillage de la saturation
+    s_thresh = pcv.threshold.binary(s, threshold=85, object_type='light')
     
-    # 3) Opérations morphologiques
-    #    - On utilise un élément structurant en forme d'ellipse de taille 11x11 puis 3x3
-    kernel_ellipse_11 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask = cv2.erode(mask, kernel_ellipse_11, iterations=1)
-    mask = cv2.dilate(mask, kernel_ellipse_11, iterations=1)
+    # Filtrage médian
+    s_mblur = pcv.median_blur(s_thresh, 5)
+    s_cnt = pcv.median_blur(s_thresh, 5)
     
-    kernel_ellipse_3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask = cv2.erode(mask, kernel_ellipse_3, iterations=1)
-    mask = cv2.dilate(mask, kernel_ellipse_3, iterations=1)
+    # Conversion en LAB et extraction du canal bleu
+    b = pcv.rgb2gray_lab(img, 'b')
     
-    mask = cv2.GaussianBlur(mask, (3, 3), 0)
+    # Seuillage de l'image bleue
+    b_thresh = pcv.threshold.binary(b, threshold=160, object_type='light')
+    b_cnt = pcv.threshold.binary(b, threshold=160, object_type='light')
     
-    # 4) Sauvegarde ou affichage
+    # Fusion des images seuillées (saturation et bleu)
+    bs = pcv.logical_or(s_mblur, b_cnt)
+    
+    # Application du masque (affichage en blanc)
+    masked = pcv.apply_mask(img, bs, 'white')
+    
+    # Conversion en LAB pour extraire les canaux a et b
+    masked_a = pcv.rgb2gray_lab(masked, 'a')
+    masked_b = pcv.rgb2gray_lab(masked, 'b')
+    
+    # Seuillage sur les canaux a et b
+    maskeda_thresh = pcv.threshold.binary(masked_a, threshold=115, object_type='dark')
+    maskeda_thresh1 = pcv.threshold.binary(masked_a, threshold=135, object_type='light')
+    maskedb_thresh = pcv.threshold.binary(masked_b, threshold=128, object_type='light')
+    
+    # Fusion des seuillages des canaux a et b
+    ab1 = pcv.logical_or(maskeda_thresh, maskedb_thresh)
+    ab = pcv.logical_or(maskeda_thresh1, ab1)
+    ab_cnt = pcv.logical_or(maskeda_thresh1, ab1)
+    
+    # Remplissage des petits objets
+    ab_fill = pcv.fill(ab, 200)
+    
+    # Application finale du masque
+    masked2 = pcv.apply_mask(masked, ab_fill, 'white')
+    
+    # Sauvegarde ou affichage du résultat
     if output_path:
-        cv2.imwrite(output_path, mask)
+        cv2.imwrite(output_path, masked2)
     else:
         plt.figure(figsize=(8, 6))
-        plt.imshow(mask, cmap='gray')
+        plt.imshow(masked2, cmap='gray')
         plt.axis('off')
         plt.title("Figure IV.3: Mask")
         plt.show()
     
-    return mask
+    return masked2
 
 
 
