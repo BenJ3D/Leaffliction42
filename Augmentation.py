@@ -1,6 +1,7 @@
 import os
 import argparse
 from PIL import Image
+import shutil  # added import for copying
 
 def augment_image(image, augmentations):
     # Applique l'ensemble des transformations définies et retourne un dictionnaire
@@ -157,39 +158,46 @@ def augment_dataset_balanced(input_directory, output_directory):
         print("Aucune catégorie trouvée dans le dataset.")
         return
 
-    # Déterminer la cible : le nombre maximum d'images parmi les catégories
+    # Déterminer la cible : le nombre maximum d'images originales parmi les catégories
     target = max(len(imgs) for imgs in categories.values())
-
     augmentations = get_augmentations()
     print(f"Nombre d'images cible par catégorie : {target}")
 
-    # Pour chaque catégorie, compléter jusqu'à atteindre le nombre cible
+    # Pour chaque catégorie, copier les images originales puis compléter jusqu'à atteindre le nombre cible
     for category, images in categories.items():
         category_input_path = os.path.join(input_directory, category)
         category_output_path = os.path.join(output_directory, category)
         os.makedirs(category_output_path, exist_ok=True)
-        current_count = len(images)
+        
+        # Copier toutes les images originales dans le dossier final
+        for img_name in images:
+            src = os.path.join(category_input_path, img_name)
+            dst = os.path.join(category_output_path, img_name)
+            try:
+                shutil.copy2(src, dst)
+            except Exception as e:
+                print(f"Erreur lors de la copie de {src}: {e}")
+                
+        current_count = len(images)  # compte des images originales
         needed = target - current_count
-        print(f"Catégorie '{category}': {current_count} images existantes, besoin de {needed} images augmentées.")
+        print(f"Catégorie '{category}': {current_count} images originales copiées, besoin de {needed} images augmentées.")
 
         img_index = 0  # pour parcourir les images existantes cycliquement
-        aug_index = 0  # pour choisir les augmentations de façon cyclique
+        aug_index = 0  # pour choisir les augmentations cycliquement
         while needed > 0:
             img_name = images[img_index % len(images)]
             img_path = os.path.join(category_input_path, img_name)
             try:
                 with Image.open(img_path) as img:
-                    # Sélection cyclique de l'augmentation
                     aug_name, func = augmentations[aug_index % len(augmentations)]
                     aug_img = func(img)
                     base_name, ext = os.path.splitext(img_name)
-                    # Pour éviter les collisions de noms, on ajoute un index complémentaire
                     output_file = os.path.join(category_output_path, f"{base_name}_{aug_name}_{aug_index // len(augmentations)}{ext}")
                     aug_img.save(output_file)
                     needed -= 1
                     aug_index += 1
             except Exception as e:
-                print(f"Erreur lors du traitement de l'image {img_path} : {e}")
+                print(f"Erreur lors du traitement de {img_path} : {e}")
             img_index += 1
         print(f"Catégorie '{category}' équilibrée à {target} images.")
 
