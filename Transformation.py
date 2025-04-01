@@ -21,77 +21,41 @@ def show_or_save(img, title, filename=None):
 
 
 def original_image(img, output_path=None):
-    """Affiche l'image originale."""
+    """Renvoie l'image originale convertie en RGB."""
     rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    
     if output_path:
         pcv.outputs.save_image(rgb_img, output_path)
-    else:
-        plt.figure(figsize=(8, 6))
-        plt.imshow(rgb_img)
-        plt.title("Figure IV.1: Original")
-        plt.axis('off')
-        plt.show()
     return rgb_img
 
 
 def gaussian_blur(img, output_path=None):
-    """Applique un flou gaussien à l'image avec un kernel agrandi."""
-    # Modification : kernel changé pour (7,7)
+    """Applique un flou gaussien à l'image et renvoie le résultat."""
     img_blur = pcv.gaussian_blur(img=img, ksize=(7, 7), sigma_x=0, sigma_y=None)
     if output_path:
         pcv.outputs.save_image(img_blur, output_path)
-    else:
-        plt.figure(figsize=(8, 6))
-        plt.imshow(cv2.cvtColor(img_blur, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.2: Gaussian blur (kernel 7x7)")
-        plt.axis('off')
-        plt.show()
     return img_blur
 
 
 def create_mask(img, output_path=None):
-    """
-    Crée un masque binaire à partir de l'image en utilisant la saturation,
-    puis applique un filtrage et une ouverture morphologique pour améliorer le masque.
-    """
-    # Conversion en HSV & extraction du canal de saturation
+    """Crée un masque binaire et renvoie le résultat."""
     s = pcv.rgb2gray_hsv(img, 's')
-    # Seuillage de la saturation avec un seuil ajusté
     s_thresh = pcv.threshold.binary(s, threshold=90, object_type='light')
-    # Filtrage médian puis ouverture morphologique pour éliminer le bruit
     s_mblur = pcv.median_blur(s_thresh, 5)
     struct_elem = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     opened = cv2.morphologyEx(s_mblur, cv2.MORPH_OPEN, struct_elem)
-    
-    # Conversion en LAB & seuillage du canal bleu
     b = pcv.rgb2gray_lab(img, 'b')
     b_thresh = pcv.threshold.binary(b, threshold=160, object_type='light')
-    
-    # Fusion des seuillages
     combined = pcv.logical_or(opened, b_thresh)
     masked = pcv.apply_mask(img, combined, 'white')
-    # Remplissage pour lisser le masque
     filled = pcv.fill(combined, 200)
     final_mask = pcv.apply_mask(masked, filled, 'white')
-    
     if output_path:
         cv2.imwrite(output_path, final_mask)
-    else:
-        plt.figure(figsize=(8, 6))
-        plt.imshow(final_mask, cmap='gray')
-        plt.axis('off')
-        plt.title("Figure IV.3: Mask (amélioré)")
-        plt.show()
-    
     return final_mask
 
 
 def roi_objects(img, mask, output_path=None):
-    """
-    Identifie les objets dans les régions d'intérêt en ajoutant une étiquette.
-    """
-    # Conversion du masque en image mono-canal binaire
+    """Identifie les objets dans les régions d'intérêt et renvoie l'image annotée."""
     if len(mask.shape) != 2:
         mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
     else:
@@ -105,23 +69,13 @@ def roi_objects(img, mask, output_path=None):
             x, y, w, h = cv2.boundingRect(cnt)
             cv2.rectangle(roi_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
             cv2.putText(roi_img, f"ROI {idx+1}", (x, max(y-10,0)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-    # ...existing code for affichage/sauvegarde...
     if output_path:
         pcv.outputs.save_image(roi_img, output_path)
-    else:
-        plt.figure(figsize=(8, 6))
-        plt.imshow(cv2.cvtColor(roi_img, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.4: ROI objects (avec étiquettes)")
-        plt.axis('off')
-        plt.show()
     return roi_img
 
 
 def analyze_object(img, mask, output_path=None):
-    """
-    Analyse l'objet principal en améliorant la visualisation du centroid.
-    """
-    # Conversion du masque en image mono-canal binaire
+    """Analyse l'objet principal et renvoie l'image annotée."""
     if len(mask.shape) != 2:
         mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
     else:
@@ -136,7 +90,7 @@ def analyze_object(img, mask, output_path=None):
         if m["m00"] != 0:
             cx = int(m["m10"] / m["m00"])
             cy = int(m["m01"] / m["m00"])
-            cv2.circle(analyze_img, (cx, cy), 10, (0, 0, 255), -1)  # cercle rouge
+            cv2.circle(analyze_img, (cx, cy), 10, (0, 0, 255), -1)
             cv2.putText(analyze_img, "Centre", (cx - 20, cy - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         topmost = tuple(obj[obj[:, :, 1].argmin()][0])
         bottommost = tuple(obj[obj[:, :, 1].argmax()][0])
@@ -146,20 +100,11 @@ def analyze_object(img, mask, output_path=None):
         cv2.line(analyze_img, leftmost, rightmost, (255, 0, 255), 2)
     if output_path:
         pcv.outputs.save_image(analyze_img, output_path)
-    else:
-        plt.figure(figsize=(8, 6))
-        plt.imshow(cv2.cvtColor(analyze_img, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.5: Analyze object (modifié)")
-        plt.axis('off')
-        plt.show()
     return analyze_img
 
 
 def pseudolandmarks(img, mask, output_path=None):
-    """
-    Extrait des points caractéristiques (pseudolandmarks) sur le contour.
-    """
-    # Conversion du masque en image mono-canal binaire
+    """Extrait des points caractéristiques et renvoie l'image annotée."""
     if len(mask.shape) != 2:
         mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
     else:
@@ -174,15 +119,9 @@ def pseudolandmarks(img, mask, output_path=None):
         step = max(1, len(points) // nb_points)
         for i in range(0, len(points), step):
             x, y = points[i]
-            cv2.circle(landmark_img, (x, y), 4, (0, 140, 255), -1)  # cercle orange foncé
+            cv2.circle(landmark_img, (x, y), 4, (0, 140, 255), -1)
     if output_path:
         pcv.outputs.save_image(landmark_img, output_path)
-    else:
-        plt.figure(figsize=(8, 6))
-        plt.imshow(cv2.cvtColor(landmark_img, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.6: Pseudolandmarks (modifié)")
-        plt.axis('off')
-        plt.show()
     return landmark_img
 
 
@@ -326,6 +265,90 @@ def process_directory(input_dir, output_dir, transformations=None):
     return True
 
 
+def display_combined_results(input_file):
+    """
+    Applique toutes les transformations à une image et les affiche dans une seule fenêtre.
+    """
+    img = cv2.imread(input_file)
+    if img is None:
+        print(f"Erreur: Impossible de charger l'image {input_file}")
+        return
+    # Appliquer les transformations
+    orig = original_image(img, None)
+    blur = gaussian_blur(img, None)
+    mask = create_mask(img, None)
+    roi = roi_objects(img, mask, None)
+    analyze = analyze_object(img, mask, None)
+    landmarks = pseudolandmarks(img, mask, None)
+    
+    # Calcul de l'histogramme
+    b, g, r = cv2.split(img)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
+    l, a, b2 = cv2.split(lab)
+    
+    # Création d'une figure combinée avec une grille 3x2 pour les images et l'histogramme en dessous
+    fig = plt.figure(figsize=(14, 12))  # Ajustement du format pour plus de hauteur
+    grid = fig.add_gridspec(5, 3, height_ratios=[1, 1, 1, 0.8, 0.8])  # 3 lignes pour les images, 2 pour l'histogramme
+    
+    # Ajouter les images dans une grille 3x2
+    ax1 = fig.add_subplot(grid[0, 0])
+    ax1.imshow(orig)
+    ax1.set_title("Original")
+    ax1.axis('off')
+    
+    ax2 = fig.add_subplot(grid[0, 1])
+    ax2.imshow(cv2.cvtColor(blur, cv2.COLOR_BGR2RGB))
+    ax2.set_title("Gaussian Blur")
+    ax2.axis('off')
+    
+    ax3 = fig.add_subplot(grid[0, 2])
+    ax3.imshow(mask, cmap='gray')
+    ax3.set_title("Mask")
+    ax3.axis('off')
+    
+    ax4 = fig.add_subplot(grid[1, 0])
+    ax4.imshow(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
+    ax4.set_title("ROI")
+    ax4.axis('off')
+    
+    ax5 = fig.add_subplot(grid[1, 1])
+    ax5.imshow(cv2.cvtColor(analyze, cv2.COLOR_BGR2RGB))
+    ax5.set_title("Analyze Object")
+    ax5.axis('off')
+    
+    ax6 = fig.add_subplot(grid[1, 2])
+    ax6.imshow(cv2.cvtColor(landmarks, cv2.COLOR_BGR2RGB))
+    ax6.set_title("Pseudolandmarks")
+    ax6.axis('off')
+    
+    # Ajouter l'histogramme en dessous, sur deux lignes
+    ax7 = fig.add_subplot(grid[3:, :])
+    for name, channel in {
+        'blue': b,
+        'green': g,
+        'red': r,
+        'hue': h,
+        'saturation': s,
+        'value': v,
+        'lightness': l,
+        'green-magenta': a,
+        'blue-yellow': b2
+    }.items():
+        hist = cv2.calcHist([channel], [0], None, [256], [0,256])
+        hist_norm = hist.ravel() / hist.sum()
+        ax7.plot(hist_norm, label=name)
+    ax7.set_xlim([0, 256])
+    ax7.set_ylim([0, 0.12])
+    ax7.set_title("Color Histogram")
+    ax7.legend(fontsize='small')
+    ax7.grid(True)
+    
+    plt.tight_layout()
+    plt.show()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Programme de transformation d'images pour l'analyse de feuilles.")
     
@@ -373,7 +396,11 @@ def main():
         if not os.path.isfile(args.image):
             print(f"Erreur: Le fichier {args.image} n'existe pas.")
             return
-        process_image(args.image, args.dst, transformations)
+        # Si aucune destination n'est précisée, afficher tous les graphes dans une seule fenêtre
+        if args.dst is None:
+            display_combined_results(args.image)
+        else:
+            process_image(args.image, args.dst, transformations)
     else:
         # Cas d'un répertoire
         if not args.dst:
