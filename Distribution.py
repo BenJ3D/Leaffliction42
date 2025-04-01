@@ -3,6 +3,11 @@ import matplotlib.pyplot as plt
 import argparse
 
 def analyze_dataset(directory):
+    # Vérifier si le répertoire existe et est un dossier
+    if not os.path.isdir(directory):
+        print(f"Erreur: Le chemin '{directory}' n'existe pas ou n'est pas un répertoire.")
+        return
+
     # Dictionnaire pour stocker le nombre d'images par catégorie
     categories = {}
 
@@ -59,4 +64,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Analyse la répartition des images dans un répertoire.')
     parser.add_argument('directory', type=str, help='Le chemin vers le répertoire à analyser')
     args = parser.parse_args()
-    analyze_dataset(args.directory)
+    try:
+        analyze_dataset(args.directory)
+    except Exception as e:
+        print(f"Erreur lors de l'analyse du répertoire: {e}")
