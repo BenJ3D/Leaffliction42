@@ -36,21 +36,24 @@ def analyze_dataset(directory):
     # Créer un dictionnaire pour mapper les catégories aux couleurs
     category_colors = dict(zip(labels, colors))
 
-    # Diagramme circulaire (camembert)
-    plt.figure(figsize=(8, 6))
-    plt.pie(counts, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140)
-    plt.title('Répartition des images')
-    plt.axis('equal')
-    # plt.show()
-
-    # Diagramme à barres
-    plt.figure(figsize=(8, 6))
-    bars = plt.bar(labels, counts, color=[category_colors[label] for label in labels])
-    plt.title('Distribution des images par catégorie')
-    plt.xlabel('Catégories')
-    plt.ylabel("Nombre d'images")
-    plt.xticks(rotation=45)
+    # Création d'une figure avec deux sous-graphiques côte à côte
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # Diagramme circulaire (camembert) dans le premier sous-graphe
+    ax1.pie(counts, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140)
+    ax1.set_title('Répartition des images')
+    ax1.axis('equal')
+    
+    # Diagramme à barres dans le deuxième sous-graphe
+    bars = ax2.bar(labels, counts, color=[category_colors[label] for label in labels])
+    ax2.set_title('Distribution des images par catégorie')
+    ax2.set_xlabel('Catégories')
+    ax2.set_ylabel("Nombre d'images")
+    # Correction du warning : on définit les positions des ticks avant les labels
+    ax2.set_xticks(range(len(labels)))
+    ax2.set_xticklabels(labels, rotation=45)
     plt.tight_layout()
+    
     plt.show()
 
 if __name__ == "__main__":
