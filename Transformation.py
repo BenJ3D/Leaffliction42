@@ -36,15 +36,15 @@ def original_image(img, output_path=None):
 
 
 def gaussian_blur(img, output_path=None):
-    """Applique un flou gaussien à l'image."""
-    img_blur = pcv.gaussian_blur(img=img, ksize=(5, 5), sigma_x=0, sigma_y=None)
-    
+    """Applique un flou gaussien à l'image avec un kernel agrandi."""
+    # Modification : kernel changé pour (7,7)
+    img_blur = pcv.gaussian_blur(img=img, ksize=(7, 7), sigma_x=0, sigma_y=None)
     if output_path:
         pcv.outputs.save_image(img_blur, output_path)
     else:
         plt.figure(figsize=(8, 6))
         plt.imshow(cv2.cvtColor(img_blur, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.2: Gaussian blur")
+        plt.title("Figure IV.2: Gaussian blur (kernel 7x7)")
         plt.axis('off')
         plt.show()
     return img_blur
@@ -52,90 +52,66 @@ def gaussian_blur(img, output_path=None):
 
 def create_mask(img, output_path=None):
     """
-    Crée un masque binaire à partir de l'image, en exploitant la saturation (s) en HSV.
-    Puis applique des opérations morphologiques pour améliorer le masque.
+    Crée un masque binaire à partir de l'image en utilisant la saturation,
+    puis applique un filtrage et une ouverture morphologique pour améliorer le masque.
     """
-    # Conversion en HSV et extraction du canal de saturation
+    # Conversion en HSV & extraction du canal de saturation
     s = pcv.rgb2gray_hsv(img, 's')
-    
-    # Seuillage de la saturation
-    s_thresh = pcv.threshold.binary(s, threshold=85, object_type='light')
-    
-    # Filtrage médian
+    # Seuillage de la saturation avec un seuil ajusté
+    s_thresh = pcv.threshold.binary(s, threshold=90, object_type='light')
+    # Filtrage médian puis ouverture morphologique pour éliminer le bruit
     s_mblur = pcv.median_blur(s_thresh, 5)
-    s_cnt = pcv.median_blur(s_thresh, 5)
+    struct_elem = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    opened = cv2.morphologyEx(s_mblur, cv2.MORPH_OPEN, struct_elem)
     
-    # Conversion en LAB et extraction du canal bleu
+    # Conversion en LAB & seuillage du canal bleu
     b = pcv.rgb2gray_lab(img, 'b')
-    
-    # Seuillage de l'image bleue
     b_thresh = pcv.threshold.binary(b, threshold=160, object_type='light')
-    b_cnt = pcv.threshold.binary(b, threshold=160, object_type='light')
     
-    # Fusion des images seuillées (saturation et bleu)
-    bs = pcv.logical_or(s_mblur, b_cnt)
+    # Fusion des seuillages
+    combined = pcv.logical_or(opened, b_thresh)
+    masked = pcv.apply_mask(img, combined, 'white')
+    # Remplissage pour lisser le masque
+    filled = pcv.fill(combined, 200)
+    final_mask = pcv.apply_mask(masked, filled, 'white')
     
-    # Application du masque (affichage en blanc)
-    masked = pcv.apply_mask(img, bs, 'white')
-    
-    # Conversion en LAB pour extraire les canaux a et b
-    masked_a = pcv.rgb2gray_lab(masked, 'a')
-    masked_b = pcv.rgb2gray_lab(masked, 'b')
-    
-    # Seuillage sur les canaux a et b
-    maskeda_thresh = pcv.threshold.binary(masked_a, threshold=115, object_type='dark')
-    maskeda_thresh1 = pcv.threshold.binary(masked_a, threshold=135, object_type='light')
-    maskedb_thresh = pcv.threshold.binary(masked_b, threshold=128, object_type='light')
-    
-    # Fusion des seuillages des canaux a et b
-    ab1 = pcv.logical_or(maskeda_thresh, maskedb_thresh)
-    ab = pcv.logical_or(maskeda_thresh1, ab1)
-    ab_cnt = pcv.logical_or(maskeda_thresh1, ab1)
-    
-    # Remplissage des petits objets
-    ab_fill = pcv.fill(ab, 200)
-    
-    # Application finale du masque
-    masked2 = pcv.apply_mask(masked, ab_fill, 'white')
-    
-    # Sauvegarde ou affichage du résultat
     if output_path:
-        cv2.imwrite(output_path, masked2)
+        cv2.imwrite(output_path, final_mask)
     else:
         plt.figure(figsize=(8, 6))
-        plt.imshow(masked2, cmap='gray')
+        plt.imshow(final_mask, cmap='gray')
         plt.axis('off')
-        plt.title("Figure IV.3: Mask")
+        plt.title("Figure IV.3: Mask (amélioré)")
         plt.show()
     
-    return masked2
-
-
+    return final_mask
 
 
 def roi_objects(img, mask, output_path=None):
     """
-    Identifie les objets dans les régions d'intérêt.
-    - Contours en vert
-    - Rectangle englobant (bounding box) en bleu
+    Identifie les objets dans les régions d'intérêt en ajoutant une étiquette.
     """
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Conversion du masque en image mono-canal binaire
+    if len(mask.shape) != 2:
+        mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    else:
+        mask_gray = mask.copy()
+    _, mask_gray = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(mask_gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     roi_img = img.copy()
-
     if contours:
-        for i, cnt in enumerate(contours):
-            # Dessiner le contour en vert (BGR = (0,255,0))
+        for idx, cnt in enumerate(contours):
             cv2.drawContours(roi_img, [cnt], -1, (0, 255, 0), 2)
-            # Dessiner la bounding box en bleu (BGR = (255,0,0))
             x, y, w, h = cv2.boundingRect(cnt)
             cv2.rectangle(roi_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
-
+            cv2.putText(roi_img, f"ROI {idx+1}", (x, max(y-10,0)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+    # ...existing code for affichage/sauvegarde...
     if output_path:
         pcv.outputs.save_image(roi_img, output_path)
     else:
         plt.figure(figsize=(8, 6))
         plt.imshow(cv2.cvtColor(roi_img, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.4: ROI objects")
+        plt.title("Figure IV.4: ROI objects (avec étiquettes)")
         plt.axis('off')
         plt.show()
     return roi_img
@@ -143,43 +119,37 @@ def roi_objects(img, mask, output_path=None):
 
 def analyze_object(img, mask, output_path=None):
     """
-    Analyse l'objet principal.
-    - Dessine le contour en vert
-    - Calcule et dessine le centroid en bleu
-    - Trace deux lignes diagonales (haut-bas et gauche-droite) en rose (BGR=(255,0,255))
+    Analyse l'objet principal en améliorant la visualisation du centroid.
     """
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Conversion du masque en image mono-canal binaire
+    if len(mask.shape) != 2:
+        mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    else:
+        mask_gray = mask.copy()
+    _, mask_gray = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(mask_gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     analyze_img = img.copy()
-
     if contours:
-        # On prend le plus grand contour (la feuille)
         obj = max(contours, key=cv2.contourArea)
-        # Contour en vert
         cv2.drawContours(analyze_img, [obj], -1, (0, 255, 0), 2)
-
-        # Centroid
         m = cv2.moments(obj)
         if m["m00"] != 0:
             cx = int(m["m10"] / m["m00"])
             cy = int(m["m01"] / m["m00"])
-            cv2.circle(analyze_img, (cx, cy), 10, (255, 0, 0), -1)  # bleu
-
-        # Points extrêmes
-        topmost = tuple(obj[obj[:, :, 1].argmin()][0])    # y minimal
-        bottommost = tuple(obj[obj[:, :, 1].argmax()][0]) # y maximal
-        leftmost = tuple(obj[obj[:, :, 0].argmin()][0])   # x minimal
-        rightmost = tuple(obj[obj[:, :, 0].argmax()][0])  # x maximal
-
-        # Lignes diagonales en rose
+            cv2.circle(analyze_img, (cx, cy), 10, (0, 0, 255), -1)  # cercle rouge
+            cv2.putText(analyze_img, "Centre", (cx - 20, cy - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        topmost = tuple(obj[obj[:, :, 1].argmin()][0])
+        bottommost = tuple(obj[obj[:, :, 1].argmax()][0])
+        leftmost = tuple(obj[obj[:, :, 0].argmin()][0])
+        rightmost = tuple(obj[obj[:, :, 0].argmax()][0])
         cv2.line(analyze_img, topmost, bottommost, (255, 0, 255), 2)
         cv2.line(analyze_img, leftmost, rightmost, (255, 0, 255), 2)
-
     if output_path:
         pcv.outputs.save_image(analyze_img, output_path)
     else:
         plt.figure(figsize=(8, 6))
         plt.imshow(cv2.cvtColor(analyze_img, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.5: Analyze object")
+        plt.title("Figure IV.5: Analyze object (modifié)")
         plt.axis('off')
         plt.show()
     return analyze_img
@@ -188,31 +158,29 @@ def analyze_object(img, mask, output_path=None):
 def pseudolandmarks(img, mask, output_path=None):
     """
     Extrait des points caractéristiques (pseudolandmarks) sur le contour.
-    - On échantillonne le contour de la feuille et on dessine des points (cercle orange).
     """
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Conversion du masque en image mono-canal binaire
+    if len(mask.shape) != 2:
+        mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    else:
+        mask_gray = mask.copy()
+    _, mask_gray = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(mask_gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     landmark_img = img.copy()
-
     if contours:
         obj = max(contours, key=cv2.contourArea)
-        # On transforme le contour en liste de (x, y)
         points = obj.reshape(-1, 2)
-
-        # Nombre de points à afficher
         nb_points = 20
         step = max(1, len(points) // nb_points)
-
         for i in range(0, len(points), step):
             x, y = points[i]
-            # Cercle orange (BGR=(0,165,255))
-            cv2.circle(landmark_img, (x, y), 3, (0, 165, 255), -1)
-
+            cv2.circle(landmark_img, (x, y), 4, (0, 140, 255), -1)  # cercle orange foncé
     if output_path:
         pcv.outputs.save_image(landmark_img, output_path)
     else:
         plt.figure(figsize=(8, 6))
         plt.imshow(cv2.cvtColor(landmark_img, cv2.COLOR_BGR2RGB))
-        plt.title("Figure IV.6: Pseudolandmarks")
+        plt.title("Figure IV.6: Pseudolandmarks (modifié)")
         plt.axis('off')
         plt.show()
     return landmark_img
@@ -220,21 +188,13 @@ def pseudolandmarks(img, mask, output_path=None):
 
 def color_histogram(img, output_path=None):
     """
-    Affiche l'histogramme de plusieurs canaux (BGR, HSV, Lab).
-    Les histogrammes sont normalisés et superposés sur une seule figure.
+    Affiche l'histogramme de plusieurs canaux (BGR, HSV, Lab) avec amélioration visuelle.
     """
-    # Séparation BGR
     b, g, r = cv2.split(img)
-
-    # Convertir en HSV
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-
-    # Convertir en Lab
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
     l, a, b2 = cv2.split(lab)
-
-    # Canaux à tracer
     channels = {
         'blue': b,
         'green': g,
@@ -243,29 +203,26 @@ def color_histogram(img, output_path=None):
         'saturation': s,
         'value': v,
         'lightness': l,
-        'green-magenta': a,   # canal a de Lab
-        'blue-yellow': b2     # canal b de Lab
+        'green-magenta': a,
+        'blue-yellow': b2
     }
-
     plt.figure(figsize=(8, 6))
     for name, channel in channels.items():
-        hist = cv2.calcHist([channel], [0], None, [256], [0, 256])
+        hist = cv2.calcHist([channel], [0], None, [256], [0,256])
         hist_norm = hist.ravel() / hist.sum()
         plt.plot(hist_norm, label=name)
-
-    plt.xlim([0, 256])
-    plt.ylim([0, 0.1])  # Ajuster si besoin
-    plt.xlabel("Pixel intensity")
-    plt.ylabel("Proportion of Pixels (%)")
-    plt.title("Figure IV.7: Color histogram")
+    plt.xlim([0,256])
+    plt.ylim([0, 0.12])
+    plt.xlabel("Intensité des pixels")
+    plt.ylabel("Proportion normalisée")
+    plt.title("Figure IV.7: Color Histogram (amélioré)")
     plt.legend()
-
+    plt.grid(True)
     if output_path:
         plt.savefig(output_path)
         plt.close()
     else:
         plt.show()
-
     return None
 
 
@@ -349,27 +306,22 @@ def process_image(input_file, output_dir=None, transformations=None):
 
 
 def process_directory(input_dir, output_dir, transformations=None):
-    """Traite toutes les images d'un répertoire."""
+    """Traite toutes les images d'un répertoire en parcourant récursivement."""
     if not os.path.isdir(input_dir):
         print(f"Le répertoire source {input_dir} n'existe pas.")
         return False
-    
-    # Créer le répertoire de sortie
     os.makedirs(output_dir, exist_ok=True)
-    
-    # Extensions d'image courantes
     image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff']
-    
     success_count = 0
     total_count = 0
-    
-    for file in os.listdir(input_dir):
-        file_path = os.path.join(input_dir, file)
-        if os.path.isfile(file_path) and any(file.lower().endswith(ext) for ext in image_extensions):
-            total_count += 1
-            if process_image(file_path, output_dir, transformations):
-                success_count += 1
-    
+    # Parcours récursif des sous-dossiers
+    for root, dirs, files in os.walk(input_dir):
+        for file in files:
+            if any(file.lower().endswith(ext) for ext in image_extensions):
+                total_count += 1
+                file_path = os.path.join(root, file)
+                if process_image(file_path, output_dir, transformations):
+                    success_count += 1
     print(f"Traitement terminé: {success_count}/{total_count} images traitées avec succès.")
     return True
 
