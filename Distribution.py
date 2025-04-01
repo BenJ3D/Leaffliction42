@@ -49,7 +49,6 @@ def analyze_dataset(directory):
     ax2.set_title('Distribution des images par catégorie')
     ax2.set_xlabel('Catégories')
     ax2.set_ylabel("Nombre d'images")
-    # Correction du warning : on définit les positions des ticks avant les labels
     ax2.set_xticks(range(len(labels)))
     ax2.set_xticklabels(labels, rotation=45)
     plt.tight_layout()
