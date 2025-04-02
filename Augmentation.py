@@ -210,16 +210,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "input_path",
         type=str,
-        help="Chemin vers l'image à augmenter OU vers le répertoire contenant les catégories d'images si '-all' est spécifié."
+        help="Chemin vers l'image à augmenter OU vers le répertoire contenant les catégories d'images si '--all' est spécifié."
     )
     parser.add_argument(
-        "-out_dir",
+        "--out_dir",
         type=str,
         default=None,
         help="(Optionnel) Dossier où enregistrer les images augmentées"
     )
     parser.add_argument(
-        "-all",
+        "--all",
         action="store_true",
         help="Si précisé, traite l'ensemble du dataset (input_path doit alors être un répertoire) et équilibre les catégories."
     )
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     if args.all:
         # En mode dataset, input_path doit être un répertoire
         if not os.path.isdir(args.input_path):
-            print("Erreur : en mode '-all', le chemin d'entrée doit être un répertoire.")
+            print("Erreur : en mode '--all', le chemin d'entrée doit être un répertoire.")
         else:
             # Si aucun dossier de sortie n'est défini, on crée un dossier 'augmented' à côté du répertoire source
             output_directory = args.out_dir or os.path.join(os.path.dirname(args.input_path), "augmented")
@@ -236,7 +236,7 @@ if __name__ == "__main__":
     else:
         # Sinon, traiter le fichier unique
         if os.path.isdir(args.input_path):
-            print("Erreur : pour traiter un seul fichier, veuillez spécifier directement le chemin de l'image ou utiliser '-all' pour un dataset.")
+            print("Erreur : pour traiter un seul fichier, veuillez spécifier directement le chemin de l'image ou utiliser '--all' pour un dataset.")
         else:
             output_directory = args.out_dir  # peut être None
             augment_image_file(args.input_path, output_directory)
