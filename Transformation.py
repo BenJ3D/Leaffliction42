@@ -35,7 +35,8 @@ def gaussian_blur(img, output_path=None):
     mask = _create_binary_mask(img)
     if mask is None:
         blurred_gray = cv2.GaussianBlur(gray_img, (7, 7), 0)
-        if output_path: pcv.outputs.save_image(blurred_gray, output_path)
+        if output_path:
+            cv2.imwrite(output_path, blurred_gray)
         return blurred_gray
 
     masked_gray = cv2.bitwise_and(gray_img, gray_img, mask=mask)
@@ -44,13 +45,13 @@ def gaussian_blur(img, output_path=None):
     img_blur_final = cv2.GaussianBlur(high_contrast_masked, (7, 7), 0)
 
     if output_path:
-        pcv.outputs.save_image(img_blur_final, output_path)
+        cv2.imwrite(output_path, img_blur_final)
     return img_blur_final
 
 def original_image(img, output_path=None):
     """Renvoie l'image originale."""
     if output_path:
-        pcv.outputs.save_image(img, output_path)
+        cv2.imwrite(output_path, img)
     return img
 
 def create_masked_image(img, output_path=None):
@@ -58,14 +59,14 @@ def create_masked_image(img, output_path=None):
     mask = _create_binary_mask(img)
     masked_img_white_bg = pcv.apply_mask(img=img.copy(), mask=mask, mask_color='white')
     if output_path:
-        pcv.outputs.save_image(masked_img_white_bg, output_path)
+        cv2.imwrite(output_path, masked_img_white_bg)
     return masked_img_white_bg
 
 def roi_objects(img, mask, output_path=None):
     """Visualise masque superposé et cadre englobant."""
     roi_visualization_img = img.copy()
     if mask is None or cv2.countNonZero(mask) == 0:
-        if output_path: pcv.outputs.save_image(roi_visualization_img, output_path)
+        if output_path: cv2.imwrite(output_path, roi_visualization_img)
         return roi_visualization_img
     try:
         colored_masks = pcv.visualize.colorize_masks(masks=[mask], colors=['green'])
@@ -81,14 +82,14 @@ def roi_objects(img, mask, output_path=None):
         if cv2.contourArea(main_contour) > 10:
             x, y, w, h = cv2.boundingRect(main_contour)
             cv2.rectangle(roi_visualization_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
-    if output_path: pcv.outputs.save_image(roi_visualization_img, output_path)
+    if output_path: cv2.imwrite(output_path, roi_visualization_img)
     return roi_visualization_img
 
 def analyze_object(img, mask, output_path=None):
     """Analyse objet: contour et lignes extrêmes."""
     analyze_img = img.copy()
     if mask is None or cv2.countNonZero(mask) == 0:
-        if output_path: pcv.outputs.save_image(analyze_img, output_path)
+        if output_path: cv2.imwrite(output_path, analyze_img)
         return analyze_img
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -106,14 +107,14 @@ def analyze_object(img, mask, output_path=None):
                 cv2.line(analyze_img, leftmost, rightmost, magenta_color, line_thickness)
             except IndexError:
                  pass
-    if output_path: pcv.outputs.save_image(analyze_img, output_path)
+    if output_path: cv2.imwrite(output_path, analyze_img)
     return analyze_img
 
 def pseudolandmarks(img, mask, output_path=None):
     """Génère pseudolandmarks avec PlantCV."""
     landmark_img = img.copy()
     if mask is None or cv2.countNonZero(mask) == 0:
-        if output_path: pcv.outputs.save_image(landmark_img, output_path)
+        if output_path: cv2.imwrite(output_path, landmark_img)
         return landmark_img
 
     if len(mask.shape) > 2 or mask.dtype != np.uint8:
@@ -121,7 +122,7 @@ def pseudolandmarks(img, mask, output_path=None):
         if len(mask.shape) == 3: mask = mask[:, :, 0]
     _, mask_bin = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
     if cv2.countNonZero(mask_bin) == 0:
-        if output_path: pcv.outputs.save_image(landmark_img, output_path)
+        if output_path: cv2.imwrite(output_path, landmark_img)
         return landmark_img
 
     original_debug = pcv.params.debug
@@ -146,7 +147,7 @@ def pseudolandmarks(img, mask, output_path=None):
     finally:
         pcv.params.debug = original_debug
 
-    if output_path: pcv.outputs.save_image(landmark_img, output_path)
+    if output_path: cv2.imwrite(output_path, landmark_img)
     return landmark_img
 
 def color_histogram(img, output_path=None, display_mode=False):
