@@ -1,7 +1,7 @@
 import os
 import argparse
 from PIL import Image
-import shutil  # added import for copying
+import shutil
 
 def augment_image(image, augmentations):
     # Applique l'ensemble des transformations définies et retourne un dictionnaire
@@ -15,15 +15,12 @@ def augment_image(image, augmentations):
     return augmented_images
 
 def flip(img):
-    # Retourne l'image retournée horizontalement
     return img.transpose(Image.FLIP_LEFT_RIGHT)
 
 def rotate(img):
-    #Retourne l'image pivotée de 90°
     return img.rotate(90, expand=True)
 
 def skew(img):
-    # Applique une transformation affine pour skewer l'image sur l'axe X.
     skew_factor = 0.3
     w, h = img.size
     return img.transform(
@@ -34,7 +31,6 @@ def skew(img):
     )
 
 def shear(img):
-    # Applique une transformation affine pour shearrer l'image sur l'axe Y.
     shear_factor = 0.3
     w, h = img.size
     return img.transform(
@@ -45,17 +41,13 @@ def shear(img):
     )
 
 def crop(img):
-    # Retourne l'image recadrée en retirant 10 % des bords.
     w, h = img.size
     margin_w, margin_h = int(w * 0.1), int(h * 0.1)
     return img.crop((margin_w, margin_h, w - margin_w, h - margin_h))
 
 def distortion(img):
-    #Applique une légère distorsion de l'image
     w, h = img.size
-    # Définir des décalages pour chaque coin
     offset_w, offset_h = int(w * 0.1), int(h * 0.1)
-    # Coordonnées cibles pour chaque coin
     quad = (
         offset_w, offset_h,
         w - int(w * 0.05), offset_h,
@@ -79,7 +71,6 @@ def augment_image_file(input_file, output_directory=None):
         print(f"Le fichier d'entrée {input_file} n'existe pas.")
         return
 
-    # Si aucun répertoire de sortie n'est défini, on utilise le dossier de l'image source
     if output_directory is None:
         output_directory = os.path.dirname(input_file)
     else:
@@ -117,7 +108,6 @@ def augment_dataset(input_directory, output_directory):
         category_output_path = os.path.join(output_directory, category)
         if os.path.isdir(category_input_path):
             os.makedirs(category_output_path, exist_ok=True)
-            # On récupère les images (extensions jpg/jpeg/png)
             images = [f for f in os.listdir(category_input_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
             for img_name in images:
                 img_path = os.path.join(category_input_path, img_name)
@@ -134,7 +124,6 @@ def augment_dataset(input_directory, output_directory):
     print(f"Augmentation terminée. Total d'images générées : {total_augmented}")
 
 def augment_dataset_balanced(input_directory, output_directory):
-
     # Traite l'ensemble du dataset par catégories et augmente les images de chaque catégorie de sorte
     # que chaque catégorie atteigne un nombre d'images égal au maximum trouvé parmi les catégories.
     # Les images sont générées en appliquant les augmentations de manière cyclique.
@@ -146,7 +135,7 @@ def augment_dataset_balanced(input_directory, output_directory):
     os.makedirs(output_directory, exist_ok=True)
     categories = {}
 
-    # Listing des catégories et de leurs images (extensions jpg/jpeg/png)
+    # Listing des catégories et de leurs images
     for category in os.listdir(input_directory):
         category_path = os.path.join(input_directory, category)
         if os.path.isdir(category_path):
@@ -178,12 +167,12 @@ def augment_dataset_balanced(input_directory, output_directory):
             except Exception as e:
                 print(f"Erreur lors de la copie de {src}: {e}")
                 
-        current_count = len(images)  # compte des images originales
+        current_count = len(images)
         needed = target - current_count
         print(f"Catégorie '{category}': {current_count} images originales copiées, besoin de {needed} images augmentées.")
 
-        img_index = 0  # pour parcourir les images existantes cycliquement
-        aug_index = 0  # pour choisir les augmentations cycliquement
+        img_index = 0
+        aug_index = 0
         while needed > 0:
             img_name = images[img_index % len(images)]
             img_path = os.path.join(category_input_path, img_name)
@@ -238,5 +227,5 @@ if __name__ == "__main__":
         if os.path.isdir(args.input_path):
             print("Erreur : pour traiter un seul fichier, veuillez spécifier directement le chemin de l'image ou utiliser '--all' pour un dataset.")
         else:
-            output_directory = args.out_dir  # peut être None
+            output_directory = args.out_dir
             augment_image_file(args.input_path, output_directory)
