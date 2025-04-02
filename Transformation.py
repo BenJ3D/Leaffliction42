@@ -1,413 +1,442 @@
+# -*- coding: utf-8 -*-
 import os
 import cv2
 import numpy as np
 import argparse
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from plantcv import plantcv as pcv
+import io
+from PIL import Image
+import sys
+import traceback
 
+# ### FONCTION UTILITAIRE ###
 
-def show_or_save(img, title, filename=None):
-    """
-    Affiche une image ou la sauvegarde selon les paramètres.
-    """
-    if filename:
-        pcv.outputs.save_image(img, filename)
-    else:
-        plt.figure()
-        plt.imshow(img)
-        plt.title(title)
-        plt.axis('off')
-        plt.show()
+def _create_binary_mask(img):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask_green = cv2.inRange(hsv, (30, 40, 40), (90, 255, 255))
+    mask_brown = cv2.inRange(hsv, (8, 50, 20), (30, 255, 200))
+    mask_yellow = cv2.inRange(hsv, (15, 50, 50), (40, 255, 255))
+    combined_mask = cv2.bitwise_or(mask_green, mask_brown)
+    combined_mask = cv2.bitwise_or(combined_mask, mask_yellow)
+    kernel = np.ones((5,5),np.uint8)
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    _, bin_mask_for_fill = cv2.threshold(combined_mask, 1, 255, cv2.THRESH_BINARY)
+    filled_mask = pcv.fill_holes(bin_mask_for_fill)
+    return filled_mask
 
-
-def original_image(img, output_path=None):
-    """Renvoie l'image originale convertie en RGB."""
-    rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    if output_path:
-        pcv.outputs.save_image(rgb_img, output_path)
-    return rgb_img
-
+# ### TRANSFORMATIONS D'IMAGES ###
 
 def gaussian_blur(img, output_path=None):
-    """Applique un flou gaussien à l'image et renvoie le résultat."""
-    img_blur = pcv.gaussian_blur(img=img, ksize=(7, 7), sigma_x=0, sigma_y=None)
+    """Applique masque, seuillage et flou gaussien."""
+    gray_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    mask = _create_binary_mask(img)
+    if mask is None:
+        blurred_gray = cv2.GaussianBlur(gray_img, (7, 7), 0)
+        if output_path: pcv.outputs.save_image(blurred_gray, output_path)
+        return blurred_gray
+
+    masked_gray = cv2.bitwise_and(gray_img, gray_img, mask=mask)
+    threshold_value = 55; max_value = 220
+    ret, high_contrast_masked = cv2.threshold(masked_gray, threshold_value, max_value, cv2.THRESH_BINARY)
+    img_blur_final = cv2.GaussianBlur(high_contrast_masked, (7, 7), 0)
+
     if output_path:
-        pcv.outputs.save_image(img_blur, output_path)
-    return img_blur
+        pcv.outputs.save_image(img_blur_final, output_path)
+    return img_blur_final
 
-
-def create_mask(img, output_path=None):
-    """Crée un masque binaire et renvoie le résultat."""
-    s = pcv.rgb2gray_hsv(img, 's')
-    s_thresh = pcv.threshold.binary(s, threshold=90, object_type='light')
-    s_mblur = pcv.median_blur(s_thresh, 5)
-    struct_elem = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    opened = cv2.morphologyEx(s_mblur, cv2.MORPH_OPEN, struct_elem)
-    b = pcv.rgb2gray_lab(img, 'b')
-    b_thresh = pcv.threshold.binary(b, threshold=160, object_type='light')
-    combined = pcv.logical_or(opened, b_thresh)
-    masked = pcv.apply_mask(img, combined, 'white')
-    filled = pcv.fill(combined, 200)
-    final_mask = pcv.apply_mask(masked, filled, 'white')
+def original_image(img, output_path=None):
+    """Renvoie l'image originale."""
     if output_path:
-        cv2.imwrite(output_path, final_mask)
-    return final_mask
+        pcv.outputs.save_image(img, output_path)
+    return img
 
+def create_masked_image(img, output_path=None):
+    """Crée une image avec fond blanc."""
+    mask = _create_binary_mask(img)
+    masked_img_white_bg = pcv.apply_mask(img=img.copy(), mask=mask, mask_color='white')
+    if output_path:
+        pcv.outputs.save_image(masked_img_white_bg, output_path)
+    return masked_img_white_bg
 
 def roi_objects(img, mask, output_path=None):
-    """Identifie les objets dans les régions d'intérêt et renvoie l'image annotée."""
-    if len(mask.shape) != 2:
-        mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-    else:
-        mask_gray = mask.copy()
-    _, mask_gray = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(mask_gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    roi_img = img.copy()
-    if contours:
-        for idx, cnt in enumerate(contours):
-            cv2.drawContours(roi_img, [cnt], -1, (0, 255, 0), 2)
-            x, y, w, h = cv2.boundingRect(cnt)
-            cv2.rectangle(roi_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
-            cv2.putText(roi_img, f"ROI {idx+1}", (x, max(y-10,0)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-    if output_path:
-        pcv.outputs.save_image(roi_img, output_path)
-    return roi_img
+    """Visualise masque superposé et cadre englobant."""
+    roi_visualization_img = img.copy()
+    if mask is None or cv2.countNonZero(mask) == 0:
+        if output_path: pcv.outputs.save_image(roi_visualization_img, output_path)
+        return roi_visualization_img
+    try:
+        colored_masks = pcv.visualize.colorize_masks(masks=[mask], colors=['green'])
+        roi_visualization_img = pcv.visualize.overlay_two_imgs(img1=roi_visualization_img, img2=colored_masks, alpha=0.5)
+    except Exception as e:
+        green_color = np.array([0, 255, 0], dtype=np.uint8)
+        green_mask_viz = np.zeros_like(roi_visualization_img); green_mask_viz[mask > 0] = green_color
+        roi_visualization_img = cv2.addWeighted(roi_visualization_img, 0.7, green_mask_viz, 0.3, 0)
 
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        main_contour = max(contours, key=cv2.contourArea)
+        if cv2.contourArea(main_contour) > 10:
+            x, y, w, h = cv2.boundingRect(main_contour)
+            cv2.rectangle(roi_visualization_img, (x, y), (x + w, y + h), (255, 0, 0), 2)
+    if output_path: pcv.outputs.save_image(roi_visualization_img, output_path)
+    return roi_visualization_img
 
 def analyze_object(img, mask, output_path=None):
-    """Analyse l'objet principal et renvoie l'image annotée."""
-    if len(mask.shape) != 2:
-        mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-    else:
-        mask_gray = mask.copy()
-    _, mask_gray = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(mask_gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    """Analyse objet: contour et lignes extrêmes."""
     analyze_img = img.copy()
+    if mask is None or cv2.countNonZero(mask) == 0:
+        if output_path: pcv.outputs.save_image(analyze_img, output_path)
+        return analyze_img
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if contours:
         obj = max(contours, key=cv2.contourArea)
-        cv2.drawContours(analyze_img, [obj], -1, (0, 255, 0), 2)
-        m = cv2.moments(obj)
-        if m["m00"] != 0:
-            cx = int(m["m10"] / m["m00"])
-            cy = int(m["m01"] / m["m00"])
-            cv2.circle(analyze_img, (cx, cy), 10, (0, 0, 255), -1)
-            cv2.putText(analyze_img, "Centre", (cx - 20, cy - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        topmost = tuple(obj[obj[:, :, 1].argmin()][0])
-        bottommost = tuple(obj[obj[:, :, 1].argmax()][0])
-        leftmost = tuple(obj[obj[:, :, 0].argmin()][0])
-        rightmost = tuple(obj[obj[:, :, 0].argmax()][0])
-        cv2.line(analyze_img, topmost, bottommost, (255, 0, 255), 2)
-        cv2.line(analyze_img, leftmost, rightmost, (255, 0, 255), 2)
-    if output_path:
-        pcv.outputs.save_image(analyze_img, output_path)
+        cv2.drawContours(analyze_img, [obj], -1, (255, 0, 0), 2)
+        if len(obj) > 0:
+            try:
+                topmost = tuple(obj[obj[:, :, 1].argmin()][0])
+                bottommost = tuple(obj[obj[:, :, 1].argmax()][0])
+                leftmost = tuple(obj[obj[:, :, 0].argmin()][0])
+                rightmost = tuple(obj[obj[:, :, 0].argmax()][0])
+                line_thickness = 2; magenta_color = (255, 0, 255)
+                cv2.line(analyze_img, topmost, bottommost, magenta_color, line_thickness)
+                cv2.line(analyze_img, leftmost, rightmost, magenta_color, line_thickness)
+            except IndexError:
+                 pass
+    if output_path: pcv.outputs.save_image(analyze_img, output_path)
     return analyze_img
 
-
 def pseudolandmarks(img, mask, output_path=None):
-    """Extrait des points caractéristiques et renvoie l'image annotée."""
-    if len(mask.shape) != 2:
-        mask_gray = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
-    else:
-        mask_gray = mask.copy()
-    _, mask_gray = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
-    contours, _ = cv2.findContours(mask_gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    """Génère pseudolandmarks avec PlantCV."""
     landmark_img = img.copy()
-    if contours:
-        obj = max(contours, key=cv2.contourArea)
-        points = obj.reshape(-1, 2)
-        nb_points = 20
-        step = max(1, len(points) // nb_points)
-        for i in range(0, len(points), step):
-            x, y = points[i]
-            cv2.circle(landmark_img, (x, y), 4, (0, 140, 255), -1)
-    if output_path:
-        pcv.outputs.save_image(landmark_img, output_path)
+    if mask is None or cv2.countNonZero(mask) == 0:
+        if output_path: pcv.outputs.save_image(landmark_img, output_path)
+        return landmark_img
+
+    if len(mask.shape) > 2 or mask.dtype != np.uint8:
+        mask = np.clip(mask, 0, 255).astype(np.uint8)
+        if len(mask.shape) == 3: mask = mask[:, :, 0]
+    _, mask_bin = cv2.threshold(mask, 1, 255, cv2.THRESH_BINARY)
+    if cv2.countNonZero(mask_bin) == 0:
+        if output_path: pcv.outputs.save_image(landmark_img, output_path)
+        return landmark_img
+
+    original_debug = pcv.params.debug
+    pcv.params.debug = None
+    pcv.outputs.clear()
+
+    try:
+        landmark_groups = pcv.homology.x_axis_pseudolandmarks(img=img, mask=mask_bin)
+        colors = [(0, 0, 255), (0, 255, 0), (255, 0, 0)]
+        point_radius = 3
+        point_thickness = -1
+
+        for i, group in enumerate(landmark_groups):
+            if i >= len(colors): break
+            color = colors[i]
+            for point_contour in group:
+                if point_contour.shape == (1, 2):
+                    x, y = map(int, point_contour[0])
+                    cv2.circle(landmark_img, (x, y), point_radius, color, point_thickness)
+    except Exception as e:
+        print(f"Erreur pcv.homology.x_axis_pseudolandmarks: {e}")
+    finally:
+        pcv.params.debug = original_debug
+
+    if output_path: pcv.outputs.save_image(landmark_img, output_path)
     return landmark_img
 
+def color_histogram(img, output_path=None, display_mode=False):
+    """Génère l'histogramme. Retourne True si un plot est créé en display_mode."""
+    mask_hist = _create_binary_mask(img)
+    if mask_hist is None or cv2.countNonZero(mask_hist) == 0:
+        return None if not display_mode else False
 
-def color_histogram(img, output_path=None):
-    """
-    Affiche l'histogramme de plusieurs canaux (BGR, HSV, Lab) avec amélioration visuelle.
-    """
+    if len(img.shape) < 3 or img.shape[2] != 3:
+         if len(img.shape) == 2: img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+         else:
+             return None if not display_mode else False
+
     b, g, r = cv2.split(img)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
-    l, a, b2 = cv2.split(lab)
-    channels = {
-        'blue': b,
-        'green': g,
-        'red': r,
-        'hue': h,
-        'saturation': s,
-        'value': v,
-        'lightness': l,
-        'green-magenta': a,
-        'blue-yellow': b2
-    }
-    plt.figure(figsize=(8, 6))
-    for name, channel in channels.items():
-        hist = cv2.calcHist([channel], [0], None, [256], [0,256])
-        hist_norm = hist.ravel() / hist.sum()
-        plt.plot(hist_norm, label=name)
-    plt.xlim([0,256])
-    plt.ylim([0, 0.12])
-    plt.xlabel("Intensité des pixels")
-    plt.ylabel("Proportion normalisée")
-    plt.title("Figure IV.7: Color Histogram (amélioré)")
-    plt.legend()
-    plt.grid(True)
-    if output_path:
-        plt.savefig(output_path)
-        plt.close()
-    else:
-        plt.show()
-    return None
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV); h, s, v = cv2.split(hsv)
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab); l, a, b2 = cv2.split(lab)
 
+    channels_to_plot = {
+        'blue': (b, 'blue'), 'green': (g, 'darkgreen'), 'red': (r, 'red'),
+        'hue': (h, 'darkviolet'), 'saturation': (s, 'cyan'), 'value': (v, 'orange'),
+        'lightness': (l, 'dimgray'), 'green-magenta': (a, 'magenta'), 'blue-yellow': (b2, 'gold')
+    }
+
+    total_pixels = cv2.countNonZero(mask_hist)
+    if total_pixels == 0:
+        return None if not display_mode else False
+
+    fig_hist, ax_hist = plt.subplots(figsize=(10, 6))
+    fig_hist.canvas.manager.set_window_title('Figure IV.7: Histogramme')
+
+    plot_successful = False
+    for name, (channel_data, color) in channels_to_plot.items():
+        hist = cv2.calcHist([channel_data], [0], mask_hist, [256], [0,256])
+        if hist is not None and total_pixels > 0:
+             hist_percent = (hist / total_pixels) * 100
+             ax_hist.plot(hist_percent, color=color, label=name, linewidth=1.2)
+             plot_successful = True
+
+    if not plot_successful:
+        plt.close(fig_hist)
+        return None if not display_mode else False
+
+    ax_hist.set_xlim([0, 255])
+    ax_hist.set_xlabel("Pixel intensity", fontsize=12)
+    ax_hist.set_ylabel("Proportion of pixels (%)", fontsize=12)
+    ax_hist.grid(True, color='white', linestyle='-', linewidth=0.75)
+    ax_hist.set_facecolor('#EAEAEA')
+    ax_hist.legend(title="color Channel", loc='center left', bbox_to_anchor=(1, 0.5), fontsize='medium', title_fontsize='large')
+    try:
+        fig_hist.tight_layout(rect=[0, 0, 0.82, 1])
+    except Exception as e:
+         pass
+
+
+    if display_mode:
+        return True
+    elif output_path:
+        try:
+            fig_hist.savefig(output_path, facecolor=fig_hist.get_facecolor())
+            plt.close(fig_hist)
+            hist_img_saved = cv2.imread(output_path)
+            if hist_img_saved is None:
+                 return np.zeros((100, 300, 3), dtype=np.uint8)
+            return hist_img_saved
+        except Exception as e:
+            plt.close(fig_hist)
+            return np.zeros((100, 300, 3), dtype=np.uint8)
+    else:
+        plt.close(fig_hist)
+        return None
+
+
+# ### TRAITEMENT PRINCIPAL ###
 
 def process_image(input_file, output_dir=None, transformations=None):
-    """Traite une image avec les transformations sélectionnées."""
+    """Traite une image. Retourne (results_dict, hist_plot_created) en mode affichage."""
     try:
-        # Charger l'image
         img = cv2.imread(input_file)
         if img is None:
-            print(f"Erreur: Impossible de charger l'image {input_file}")
-            return False
-        
-        # Liste de toutes les transformations disponibles
+            return (None, False) if output_dir is None else None
+
+        img_orig = img.copy()
+
         all_transformations = {
-            'original': original_image,
-            'blur': gaussian_blur,
-            'mask': create_mask,
-            'roi': roi_objects,
-            'analyze': analyze_object,
-            'landmarks': pseudolandmarks,
+            'original': original_image, 'blur': gaussian_blur, 'mask': create_masked_image,
+            'roi': roi_objects, 'analyze': analyze_object, 'landmarks': pseudolandmarks,
             'histogram': color_histogram
         }
-        
-        # Si aucune transformation n'est spécifiée, on les applique toutes
-        if not transformations:
-            transformations = list(all_transformations.keys())
-        
-        # Vérifier la validité des transformations demandées
-        for t in transformations:
-            if t not in all_transformations:
-                print(f"Transformation inconnue: {t}")
-                return False
-        
-        # Créer le répertoire de sortie si besoin
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-            base_filename = os.path.splitext(os.path.basename(input_file))[0]
-        
-        # Variable pour stocker le masque (utilisé dans certaines transformations)
-        mask = None
-        
-        # Appliquer les transformations dans l'ordre
-        for t in transformations:
-            if t == 'mask':
-                mask = create_mask(
-                    img,
-                    output_dir and os.path.join(output_dir, f"{base_filename}_mask.png")
-                )
-            elif t in ['roi', 'analyze', 'landmarks']:
-                # Ces transformations nécessitent un masque
-                if mask is None:
-                    mask = create_mask(img, None)
-                
-                if t == 'roi':
-                    roi_objects(
-                        img, mask,
-                        output_dir and os.path.join(output_dir, f"{base_filename}_roi.png")
-                    )
-                elif t == 'analyze':
-                    analyze_object(
-                        img, mask,
-                        output_dir and os.path.join(output_dir, f"{base_filename}_analyze.png")
-                    )
-                elif t == 'landmarks':
-                    pseudolandmarks(
-                        img, mask,
-                        output_dir and os.path.join(output_dir, f"{base_filename}_landmarks.png")
-                    )
-            else:
-                # Transformations qui ne nécessitent pas de masque
-                all_transformations[t](
-                    img,
-                    output_dir and os.path.join(output_dir, f"{base_filename}_{t}.png")
-                )
-        
-        return True
-    
-    except Exception as e:
-        print(f"Erreur lors du traitement de l'image {input_file}: {e}")
-        return False
 
+        if not transformations: transformations = list(all_transformations.keys())
+        valid_transformations = [t for t in transformations if t in all_transformations]
+        if not valid_transformations:
+             return (None, False) if output_dir is None else None
+
+        base_filename = None
+        if output_dir:
+             os.makedirs(output_dir, exist_ok=True)
+             base_filename = os.path.splitext(os.path.basename(input_file))[0]
+
+        results = {}; mask_binary = None; histogram_created = False
+        needs_binary_mask = any(t in ['roi', 'analyze', 'landmarks'] for t in valid_transformations)
+
+        if needs_binary_mask:
+             mask_binary = _create_binary_mask(img_orig)
+             if mask_binary is None or np.count_nonzero(mask_binary) == 0:
+                 pass
+
+        for t in valid_transformations:
+            func = all_transformations[t]; output_path = None
+            if output_dir and t != 'histogram':
+                output_path = os.path.join(output_dir, f"{base_filename}_{t}.png")
+
+            try:
+                result_img = None
+                if t == 'histogram':
+                    hist_output_path = None
+                    if output_dir: hist_output_path = os.path.join(output_dir, f"{base_filename}_histogram.png")
+                    hist_result = func(img_orig, output_path=hist_output_path, display_mode=(output_dir is None))
+                    if output_dir is None:
+                        histogram_created = hist_result
+                    else:
+                         pass
+
+                elif t in ['roi', 'analyze', 'landmarks']:
+                    result_img = func(img_orig, mask_binary, output_path)
+                elif t in ['original', 'blur', 'mask']:
+                     result_img = func(img_orig, output_path)
+
+                if result_img is not None and output_dir is None and t != 'histogram':
+                     results[t] = result_img
+
+            except Exception as e:
+                print(f"Erreur application transfo '{t}' sur {input_file}: {e}")
+
+        if output_dir is None:
+            return results, histogram_created
+        else:
+            return True
+
+    except Exception as e:
+        print(f"Erreur grave traitement image {input_file}: {e}")
+        return (None, False) if output_dir is None else False
+
+
+# ### TRAITEMENT PAR LOT ###
 
 def process_directory(input_dir, output_dir, transformations=None):
-    """Traite toutes les images d'un répertoire en parcourant récursivement."""
-    if not os.path.isdir(input_dir):
-        print(f"Le répertoire source {input_dir} n'existe pas.")
-        return False
-    os.makedirs(output_dir, exist_ok=True)
-    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff']
-    success_count = 0
-    total_count = 0
-    # Parcours récursif des sous-dossiers
+    """Traite toutes les images d'un répertoire."""
+    if not os.path.isdir(input_dir): print(f"Erreur: Répertoire source {input_dir} inexistant."); return False
+    os.makedirs(output_dir, exist_ok=True); image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff']
+    success_count = 0; total_count = 0; error_files = []
+    print(f"Début traitement répertoire : {input_dir} -> {output_dir}"); print(f"Transformations : {transformations or 'Toutes'}")
     for root, dirs, files in os.walk(input_dir):
+        relative_path = os.path.relpath(root, input_dir); current_output_dir = os.path.join(output_dir, relative_path)
+        if relative_path == '.': current_output_dir = output_dir
+        if not os.path.exists(current_output_dir): os.makedirs(current_output_dir, exist_ok=True)
         for file in files:
             if any(file.lower().endswith(ext) for ext in image_extensions):
-                total_count += 1
-                file_path = os.path.join(root, file)
-                if process_image(file_path, output_dir, transformations):
-                    success_count += 1
-    print(f"Traitement terminé: {success_count}/{total_count} images traitées avec succès.")
+                total_count += 1; file_path = os.path.join(root, file)
+                print(f"-- Traitement ({total_count}) : {file_path}", end="")
+                if process_image(file_path, current_output_dir, transformations):
+                     success_count += 1; print(" [OK]")
+                else: error_files.append(file_path); print(" [ERREUR]")
+    print("-" * 30); print(f"Traitement terminé. {success_count}/{total_count} images traitées.");
+    if error_files: print("Erreurs signalées pour:", *[f"\n  - {f}" for f in error_files]); print("-" * 30)
+    return len(error_files) == 0
+
+# ### AFFICHAGE DES RÉSULTATS ###
+
+def display_combined_results(results_dict):
+    """Affiche les images de la grille dans une fenêtre. Retourne True si la grille est créée."""
+    if not results_dict:
+        return False
+
+    titles_map = {
+        'original': "Fig IV.1: Original", 'blur': "Fig IV.2: Flou Gaussien", 'mask': "Fig IV.3: Masque",
+        'roi': "Fig IV.4: Objets Roi", 'analyze': "Fig IV.5: Analyse Objet", 'landmarks': "Fig IV.6: Pseudo-repères"
+    }
+
+    images_to_display = {}; titles_to_display = {}; cmaps = {}
+    grid_keys = ['original', 'blur', 'mask', 'roi', 'analyze', 'landmarks']
+
+    for key in grid_keys:
+        if key in results_dict:
+            img = results_dict[key]; title = titles_map.get(key, key.capitalize())
+            if img is None: continue
+
+            display_img = None; cmap = None
+            if len(img.shape) == 2:
+                display_img = img; cmap = 'gray'
+            elif len(img.shape) == 3:
+                if img.shape[2] == 3: display_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                elif img.shape[2] == 4: display_img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+                else: display_img = img
+            else: continue
+
+            images_to_display[key] = display_img; titles_to_display[key] = title; cmaps[key] = cmap
+
+    if not images_to_display:
+        return False
+
+    num_images = len(images_to_display)
+    ncols = 3
+    nrows = (num_images + ncols - 1) // ncols
+    fig_grid, axes = plt.subplots(nrows, ncols, figsize=(15, 5 * nrows))
+    fig_grid.canvas.manager.set_window_title('Transformations Images')
+    axes = axes.ravel()
+
+    img_idx = 0
+    display_order = grid_keys
+    for key in display_order:
+         if key in images_to_display:
+             ax = axes[img_idx]
+             ax.imshow(images_to_display[key], cmap=cmaps[key])
+             ax.set_title(titles_to_display[key]); ax.axis('off')
+             img_idx += 1
+
+    for i in range(img_idx, len(axes)):
+        axes[i].axis('off')
+
+    try:
+        fig_grid.tight_layout()
+    except Exception as e:
+        pass
+
     return True
 
 
-def display_combined_results(input_file):
-    """
-    Applique toutes les transformations à une image et les affiche dans une seule fenêtre.
-    """
-    img = cv2.imread(input_file)
-    if img is None:
-        print(f"Erreur: Impossible de charger l'image {input_file}")
-        return
-    # Appliquer les transformations
-    orig = original_image(img, None)
-    blur = gaussian_blur(img, None)
-    mask = create_mask(img, None)
-    roi = roi_objects(img, mask, None)
-    analyze = analyze_object(img, mask, None)
-    landmarks = pseudolandmarks(img, mask, None)
-    
-    # Calcul de l'histogramme
-    b, g, r = cv2.split(img)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    h, s, v = cv2.split(hsv)
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2Lab)
-    l, a, b2 = cv2.split(lab)
-    
-    # Création d'une figure combinée avec une grille 3x2 pour les images et l'histogramme en dessous
-    fig = plt.figure(figsize=(14, 12))  # Ajustement du format pour plus de hauteur
-    grid = fig.add_gridspec(5, 3, height_ratios=[1, 1, 1, 0.8, 0.8])  # 3 lignes pour les images, 2 pour l'histogramme
-    
-    # Ajouter les images dans une grille 3x2
-    ax1 = fig.add_subplot(grid[0, 0])
-    ax1.imshow(orig)
-    ax1.set_title("Original")
-    ax1.axis('off')
-    
-    ax2 = fig.add_subplot(grid[0, 1])
-    ax2.imshow(cv2.cvtColor(blur, cv2.COLOR_BGR2RGB))
-    ax2.set_title("Gaussian Blur")
-    ax2.axis('off')
-    
-    ax3 = fig.add_subplot(grid[0, 2])
-    ax3.imshow(mask, cmap='gray')
-    ax3.set_title("Mask")
-    ax3.axis('off')
-    
-    ax4 = fig.add_subplot(grid[1, 0])
-    ax4.imshow(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
-    ax4.set_title("ROI")
-    ax4.axis('off')
-    
-    ax5 = fig.add_subplot(grid[1, 1])
-    ax5.imshow(cv2.cvtColor(analyze, cv2.COLOR_BGR2RGB))
-    ax5.set_title("Analyze Object")
-    ax5.axis('off')
-    
-    ax6 = fig.add_subplot(grid[1, 2])
-    ax6.imshow(cv2.cvtColor(landmarks, cv2.COLOR_BGR2RGB))
-    ax6.set_title("Pseudolandmarks")
-    ax6.axis('off')
-    
-    # Ajouter l'histogramme en dessous, sur deux lignes
-    ax7 = fig.add_subplot(grid[3:, :])
-    for name, channel in {
-        'blue': b,
-        'green': g,
-        'red': r,
-        'hue': h,
-        'saturation': s,
-        'value': v,
-        'lightness': l,
-        'green-magenta': a,
-        'blue-yellow': b2
-    }.items():
-        hist = cv2.calcHist([channel], [0], None, [256], [0,256])
-        hist_norm = hist.ravel() / hist.sum()
-        ax7.plot(hist_norm, label=name)
-    ax7.set_xlim([0, 256])
-    ax7.set_ylim([0, 0.12])
-    ax7.set_title("Color Histogram")
-    ax7.legend(fontsize='small')
-    ax7.grid(True)
-    
-    plt.tight_layout()
-    plt.show()
-
+# ### POINT D'ENTRÉE PRINCIPAL ###
 
 def main():
-    parser = argparse.ArgumentParser(description="Programme de transformation d'images pour l'analyse de feuilles.")
-    
-    # Groupe mutuellement exclusif pour l'entrée (image ou répertoire)
+    parser = argparse.ArgumentParser(description="Programme léger de transformation d'images pour feuilles.")
     input_group = parser.add_mutually_exclusive_group(required=True)
-    input_group.add_argument('image', nargs='?', help="Chemin vers l'image à traiter", default=None)
-    input_group.add_argument('-src', help="Répertoire source contenant les images à traiter")
-    
-    # Arguments pour spécifier les transformations et le répertoire de destination
-    parser.add_argument('-dst', help="Répertoire de destination pour sauvegarder les transformations")
-    parser.add_argument('-original', action='store_true', help="Afficher/sauvegarder l'image originale")
-    parser.add_argument('-blur', action='store_true', help="Appliquer un flou gaussien")
-    parser.add_argument('-mask', action='store_true', help="Créer un masque de l'image")
-    parser.add_argument('-roi', action='store_true', help="Identifier les objets dans les régions d'intérêt")
-    parser.add_argument('-analyze', action='store_true', help="Analyser les caractéristiques des objets")
-    parser.add_argument('-landmarks', action='store_true', help="Extraire des points caractéristiques")
-    parser.add_argument('-histogram', action='store_true', help="Afficher l'histogramme de couleurs")
-    
+    input_group.add_argument('image', nargs='?', help="Chemin image unique.", default=None)
+    input_group.add_argument('-src', help="Répertoire source (récursif).")
+    parser.add_argument('-dst', help="Répertoire destination. Si omis avec image unique, affiche.")
+    parser.add_argument('--original', action='store_true', help="Inclure Fig IV.1")
+    parser.add_argument('--blur', action='store_true', help="Inclure Fig IV.2")
+    parser.add_argument('--mask', action='store_true', help="Inclure Fig IV.3")
+    parser.add_argument('--roi', action='store_true', help="Inclure Fig IV.4")
+    parser.add_argument('--analyze', action='store_true', help="Inclure Fig IV.5")
+    parser.add_argument('--landmarks', action='store_true', help="Inclure Fig IV.6")
+    parser.add_argument('--histogram', action='store_true', help="Inclure Fig IV.7")
+    parser.add_argument('--all', action='store_true', help="Toutes transformations (défaut si rien spécifié).")
     args = parser.parse_args()
-    
-    # Récupérer les transformations demandées
-    transformations = []
-    if args.original:
-        transformations.append('original')
-    if args.blur:
-        transformations.append('blur')
-    if args.mask:
-        transformations.append('mask')
-    if args.roi:
-        transformations.append('roi')
-    if args.analyze:
-        transformations.append('analyze')
-    if args.landmarks:
-        transformations.append('landmarks')
-    if args.histogram:
-        transformations.append('histogram')
-    
-    # Si aucune transformation n'est spécifiée, on les applique toutes
-    if not transformations:
-        transformations = ['original', 'blur', 'mask', 'roi', 'analyze', 'landmarks', 'histogram']
-    
-    # Traiter une image unique ou un répertoire
-    if args.image:
-        # Cas d'une seule image
-        if not os.path.isfile(args.image):
-            print(f"Erreur: Le fichier {args.image} n'existe pas.")
-            return
-        # Si aucune destination n'est précisée, afficher tous les graphes dans une seule fenêtre
-        if args.dst is None:
-            display_combined_results(args.image)
-        else:
-            process_image(args.image, args.dst, transformations)
-    else:
-        # Cas d'un répertoire
-        if not args.dst:
-            print("Erreur: Le répertoire de destination (-dst) est requis lors du traitement d'un répertoire.")
-            return
-        process_directory(args.src, args.dst, transformations)
 
+    transformations = []
+    any_transformation_flag = args.original or args.blur or args.mask or args.roi or args.analyze or args.landmarks or args.histogram
+    default_order = ['original', 'blur', 'mask', 'roi', 'analyze', 'landmarks', 'histogram']
+
+    if args.all or not any_transformation_flag:
+        transformations = default_order
+    else:
+        if args.histogram: transformations.append('histogram')
+        for key in default_order[:-1]:
+             if getattr(args, key, False): transformations.append(key)
+        if 'histogram' in transformations:
+            transformations.remove('histogram')
+            transformations.append('histogram')
+
+
+    if args.image:
+        if not os.path.isfile(args.image): print(f"Erreur: Fichier '{args.image}' inexistant."); return
+        if args.dst is None:
+            print("Mode affichage.")
+            results_dict, histogram_created = process_image(args.image, output_dir=None, transformations=transformations)
+
+            grid_created = False
+            if results_dict:
+                 grid_created = display_combined_results(results_dict)
+
+            if grid_created or histogram_created:
+                print("Affichage des fenêtres. Fermez toutes les fenêtres pour quitter.")
+                plt.show()
+            else:
+                 print("Aucun résultat (ni grille, ni histogramme) n'a été généré pour l'affichage.")
+
+        else:
+            print(f"Mode sauvegarde -> '{args.dst}'.")
+            process_image(args.image, args.dst, transformations)
+
+    elif args.src:
+        if not args.dst: print("Erreur: -dst requis pour -src."); return
+        print(f"Mode traitement répertoire : '{args.src}' -> '{args.dst}'.")
+        if 'histogram' not in transformations and (args.histogram or args.all):
+             transformations.append('histogram')
+        process_directory(args.src, args.dst, transformations)
+    else:
+        print("Erreur: Spécifier une image ou -src.")
+        parser.print_help()
 
 if __name__ == "__main__":
     main()
