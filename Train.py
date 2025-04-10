@@ -11,6 +11,24 @@ import matplotlib.pyplot as plt
 import cv2
 from tqdm import tqdm
 
+# Variables globales de configuration pour l'entraînement
+# Modifiez ces valeurs pour ajuster l'entraînement sans changer le code
+IMG_SIZE = 224                 # Taille des images (hauteur et largeur)
+EPOCHS = 50                    # Nombre d'époques d'entraînement
+BATCH_SIZE = 32                # Taille du lot pour l'entraînement
+LEARNING_RATE = 0.001          # Taux d'apprentissage initial
+DROPOUT_RATE = 0.5             # Taux de dropout pour éviter le surapprentissage
+VALIDATION_SPLIT = 0.2         # Proportion de données pour la validation
+EARLY_STOP_PATIENCE = 5       # Patience pour l'arrêt anticipé (époques)
+REDUCE_LR_PATIENCE = 5         # Patience pour la réduction du taux d'apprentissage
+
+# Mode rapide pour les tests (mettre à True pour un entraînement plus rapide)
+QUICK_MODE = False
+if QUICK_MODE:
+    IMG_SIZE = 64
+    EPOCHS = 3
+    BATCH_SIZE = 32
+
 class CustomArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f"Erreur: {message}\n")
@@ -43,20 +61,23 @@ def create_cnn_model(input_shape, num_classes):
         layers.Conv2D(128, (3, 3), activation='relu'),
         layers.MaxPooling2D((2, 2)),
         layers.Flatten(),
-        layers.Dropout(0.5),
+        layers.Dropout(DROPOUT_RATE),  # Utiliser la variable globale
         layers.Dense(128, activation='relu'),
         layers.Dense(num_classes, activation='softmax')
     ])
     
+    # Utiliser le taux d'apprentissage global
+    optimizer = keras.optimizers.Adam(learning_rate=LEARNING_RATE)
+    
     model.compile(
-        optimizer='adam',
+        optimizer=optimizer,
         loss='categorical_crossentropy',
         metrics=['accuracy']
     )
     
     return model
 
-def load_and_preprocess_data(directory, classes, img_size=(224, 224)):
+def load_and_preprocess_data(directory, classes, img_size=(IMG_SIZE, IMG_SIZE)):
     """Load images from directory and preprocess them."""
     X = []
     y = []
@@ -92,7 +113,7 @@ def load_and_preprocess_data(directory, classes, img_size=(224, 224)):
     
     return np.array(X), np.array(y)
 
-def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(224, 224)):
+def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(IMG_SIZE, IMG_SIZE)):
     """Train the CNN model."""
     # Convertir les étiquettes en format catégorique
     y_train_cat = keras.utils.to_categorical(y_train, num_classes)
@@ -114,21 +135,27 @@ def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(224, 224)
     )
     datagen.fit(X_train)
     
-    # Callbacks pour améliorer l'entraînement
+    # Callbacks pour améliorer l'entraînement - utiliser les variables globales
     callbacks = [
-        keras.callbacks.EarlyStopping(patience=10, monitor='val_accuracy', restore_best_weights=True),
-        keras.callbacks.ReduceLROnPlateau(factor=0.2, patience=5, min_lr=0.00001)
+        keras.callbacks.EarlyStopping(
+            patience=EARLY_STOP_PATIENCE, 
+            monitor='val_accuracy', 
+            restore_best_weights=True
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            factor=0.2, 
+            patience=REDUCE_LR_PATIENCE, 
+            min_lr=0.00001
+        )
     ]
     
-    # Entraînement du modèle
-    epochs = 50
-    batch_size = 32
-    
+    # Entraînement du modèle - utiliser les variables globales
     print("\nDébut de l'entraînement du modèle...")
+    print(f"Configuration: epochs={EPOCHS}, batch_size={BATCH_SIZE}, learning_rate={LEARNING_RATE}")
     history = model.fit(
-        datagen.flow(X_train, y_train_cat, batch_size=batch_size),
-        steps_per_epoch=len(X_train) // batch_size,
-        epochs=epochs,
+        datagen.flow(X_train, y_train_cat, batch_size=BATCH_SIZE),
+        steps_per_epoch=len(X_train) // BATCH_SIZE,
+        epochs=EPOCHS,
         validation_data=(X_val, y_val_cat),
         callbacks=callbacks
     )
@@ -173,8 +200,9 @@ def save_model(model, classes):
     # Créer un dossier 'model' s'il n'existe pas
     os.makedirs('model', exist_ok=True)
     
-    # Sauvegarder le modèle au format TensorFlow SavedModel
-    model.save('model/leaffliction_model')
+    # Sauvegarder le modèle au format Keras natif
+    model_path = 'model/leaffliction_model.keras'
+    model.save(model_path)
     
     # Sauvegarder le mappage des classes
     class_mapping = {i: class_name for i, class_name in enumerate(classes)}
@@ -182,7 +210,7 @@ def save_model(model, classes):
         json.dump(class_mapping, f, indent=4)
     
     print("Modèle sauvegardé dans le dossier 'model/'")
-    return 'model/leaffliction_model'
+    return model_path
 
 def main():
     parser = CustomArgumentParser(
@@ -192,17 +220,19 @@ def main():
         "src",
         help="Chemin du dossier récursif contenant toutes les images d'entrainement"
     )
+    
+    # Permettre de remplacer les variables globales par des arguments
     parser.add_argument(
         "--img_size", 
         type=int, 
-        default=224, 
-        help="Taille des images (défaut: 224)"
+        default=IMG_SIZE, 
+        help=f"Taille des images (défaut: {IMG_SIZE})"
     )
     parser.add_argument(
         "--val_split", 
         type=float, 
-        default=0.2, 
-        help="Proportion de données pour la validation (défaut: 0.2)"
+        default=VALIDATION_SPLIT, 
+        help=f"Proportion de données pour la validation (défaut: {VALIDATION_SPLIT})"
     )
     args = parser.parse_args()
 
@@ -221,7 +251,7 @@ def main():
         print(f"- {cls}")
     print(f"Liste des classes sauvegardée dans: {json_path}")
 
-    # Image preprocessing settings
+    # Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
     img_size = (args.img_size, args.img_size)
     
     # Charger et prétraiter les données
@@ -234,6 +264,7 @@ def main():
     print(f"\nEnsemble de données chargé: {len(X)} images, {len(classes)} classes")
     
     # Diviser les données en ensembles d'entraînement et de validation
+    # Utiliser l'argument qui peut remplacer la variable globale
     X_train, X_val, y_train, y_val = train_test_split(
         X, y, test_size=args.val_split, stratify=y, random_state=42
     )
