@@ -11,6 +11,11 @@ import matplotlib.pyplot as plt
 import cv2
 from tqdm import tqdm
 
+import tensorflow as tf
+
+# Active la précision mixte pour accélérer l'entraînement sur GPU
+mixed_precision = tf.keras.mixed_precision.set_global_policy('mixed_float16')
+
 # Variables globales de configuration pour l'entraînement
 # Modifiez ces valeurs pour ajuster l'entraînement sans changer le code
 IMG_SIZE = 224                 # Taille des images (hauteur et largeur)
@@ -34,6 +39,24 @@ class CustomArgumentParser(argparse.ArgumentParser):
         sys.stderr.write(f"Erreur: {message}\n")
         sys.exit(2)
 
+
+# Vérifier la disponibilité du GPU
+print("Nombre de GPUs disponibles:", len(tf.config.list_physical_devices('GPU')))
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    print(f"GPUs détectés: {gpus}")
+    print("TensorFlow utilisera le GPU")
+    # Configuration mémoire optimisée pour le GPU
+    for gpu in gpus:
+        try:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            print(f"Erreur de configuration du GPU: {e}")
+else:
+    print("Aucun GPU détecté. TensorFlow utilisera le CPU.")
+
+
+
 def extract_classes(directory):
     """Extract class names from subdirectories."""
     classes = []
@@ -52,21 +75,23 @@ def save_classes_to_json(classes):
     return json_path
 
 def create_cnn_model(input_shape, num_classes):
-    """Create a CNN model for image classification."""
+    """Create a CNN model for image classification avec une architecture optimisée."""
     model = models.Sequential([
-        layers.Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
+        layers.Conv2D(32, (3, 3), activation='relu', padding='same', input_shape=input_shape),
         layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(64, (3, 3), activation='relu'),
+        layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
         layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(128, (3, 3), activation='relu'),
+        layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
         layers.MaxPooling2D((2, 2)),
-        layers.Flatten(),
-        layers.Dropout(DROPOUT_RATE),  # Utiliser la variable globale
-        layers.Dense(128, activation='relu'),
+        layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
+        layers.MaxPooling2D((2, 2)),
+        layers.Conv2D(512, (3, 3), activation='relu', padding='same'),
+        layers.GlobalAveragePooling2D(),  # Remplace Flatten pour réduire drastiquement les paramètres
+        layers.Dense(256, activation='relu'),
+        layers.Dropout(DROPOUT_RATE),
         layers.Dense(num_classes, activation='softmax')
     ])
     
-    # Utiliser le taux d'apprentissage global
     optimizer = keras.optimizers.Adam(learning_rate=LEARNING_RATE)
     
     model.compile(
@@ -170,6 +195,78 @@ def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(IMG_SIZE,
     
     return model, history
 
+def train_with_generators(directory, classes, img_size=(IMG_SIZE, IMG_SIZE), batch_size=BATCH_SIZE, validation_split=VALIDATION_SPLIT):
+    """Version optimisée qui utilise le multithreading pour le chargement des données."""
+    
+    # Même générateur qu'avant mais avec multithreading
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,
+        rotation_range=20,
+        width_shift_range=0.1,
+        height_shift_range=0.1,
+        shear_range=0.2,
+        zoom_range=0.2,
+        horizontal_flip=True,
+        validation_split=validation_split
+    )
+    
+    # Ajouter workers pour paralléliser le chargement des images
+    train_generator = train_datagen.flow_from_directory(
+        directory,
+        target_size=img_size,
+        batch_size=batch_size,
+        class_mode='categorical',
+        subset='training',
+        shuffle=True
+    )
+    
+    validation_generator = train_datagen.flow_from_directory(
+        directory,
+        target_size=img_size,
+        batch_size=batch_size,
+        class_mode='categorical',
+        subset='validation'
+    )
+    
+    # Créer le modèle
+    model = create_cnn_model(input_shape=(img_size[0], img_size[1], 3), num_classes=len(classes))
+    print(model.summary())
+    
+    callbacks = [
+        keras.callbacks.EarlyStopping(
+            patience=EARLY_STOP_PATIENCE, 
+            monitor='val_accuracy', 
+            restore_best_weights=True
+        ),
+        keras.callbacks.ReduceLROnPlateau(
+            factor=0.2, 
+            patience=REDUCE_LR_PATIENCE, 
+            min_lr=0.00001
+        )
+    ]
+    
+    print("\nDébut de l'entraînement du modèle...")
+    print(f"Configuration: epochs={EPOCHS}, batch_size={batch_size}, learning_rate={LEARNING_RATE}")
+    
+    history = model.fit(
+        train_generator,
+        steps_per_epoch=train_generator.samples // batch_size,
+        epochs=EPOCHS,
+        validation_data=validation_generator,
+        validation_steps=validation_generator.samples // batch_size,
+        callbacks=callbacks
+    )
+    
+    # Évaluation du modèle avec le générateur de validation
+    print("\nÉvaluation du modèle...")
+    val_loss, val_acc = model.evaluate(validation_generator)
+    print(f"Précision sur l'ensemble de validation: {val_acc:.4f}")
+    
+    # Tracer les courbes d'apprentissage
+    plot_training_history(history)
+    
+    return model, history
+
 def plot_training_history(history):
     """Plot training & validation accuracy and loss."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
@@ -254,26 +351,14 @@ def main():
     # Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
     img_size = (args.img_size, args.img_size)
     
-    # Charger et prétraiter les données
-    X, y = load_and_preprocess_data(args.src, classes, img_size)
-    
-    if len(X) == 0:
-        print("Aucune image n'a pu être chargée. Vérifiez le répertoire source.")
-        return
-        
-    print(f"\nEnsemble de données chargé: {len(X)} images, {len(classes)} classes")
-    
-    # Diviser les données en ensembles d'entraînement et de validation
-    # Utiliser l'argument qui peut remplacer la variable globale
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=args.val_split, stratify=y, random_state=42
+    # Entraîner le modèle avec des générateurs
+    model, history = train_with_generators(
+        args.src, 
+        classes,
+        img_size=img_size,
+        batch_size=BATCH_SIZE,
+        validation_split=args.val_split
     )
-    
-    print(f"Ensemble d'entraînement: {len(X_train)} images")
-    print(f"Ensemble de validation: {len(X_val)} images")
-    
-    # Entraîner le modèle
-    model, history = train_model(X_train, y_train, X_val, y_val, len(classes), img_size)
     
     # Sauvegarder le modèle
     model_path = save_model(model, classes)
