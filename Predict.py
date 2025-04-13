@@ -11,8 +11,10 @@ from Transformation import gaussian_blur, create_masked_image, _create_binary_ma
 from tqdm import tqdm
 
 # Taille des images attendue par le modèle (doit correspondre à l'entraînement)
-IMG_SIZE = 224
+# IMG_SIZE = 256
+IMG_SIZE = 82 #mode train rapid TODO: remettre à 256 (final train)
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 class CustomArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f"Erreur: {message}\n")
@@ -75,7 +77,8 @@ def predict_disease(model, class_mapping, img_preprocessed):
         img_batch = np.expand_dims(img_preprocessed, axis=0)
         
         # Faire la prédiction
-        predictions = model.predict(img_batch)
+        predictions = model.predict(img_batch, verbose=0)
+
         
         # Trouver la classe avec la plus grande probabilité
         pred_idx = np.argmax(predictions[0])
@@ -116,7 +119,7 @@ def evaluate_directory(model, class_mapping, test_dir):
     total_images = 0
     correct_predictions = 0
     per_class_stats = {}
-    log_filepath = "evaluation_results.txt"
+    log_filepath = "predict_results.txt"
 
     with open(log_filepath, "w") as log_file:
         log_file.write(f"Évaluation du répertoire : {test_dir}\n")
@@ -162,11 +165,14 @@ def evaluate_directory(model, class_mapping, test_dir):
 
         log_file.write("-" * 60 + "\n")
         print("-" * 60)
+        delta = total_images - correct_predictions;
         if total_images > 0:
             overall_accuracy = (correct_predictions / total_images) * 100
             log_file.write("\nRésultat final:\n")
             log_file.write(f"  Images testées       : {total_images}\n")
             log_file.write(f"  Prédictions correctes: {correct_predictions}\n")
+            # if delta > 0 :
+            log_file.write(f"  Delta : {delta}\n")
             log_file.write(f"  Précision (Accuracy) : {overall_accuracy:.2f}%\n")
             print(f"\nRésultat final:")
             print(f"  Images testées       : {total_images}")
