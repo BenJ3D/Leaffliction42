@@ -11,6 +11,7 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import cv2
 from tqdm import tqdm
+from utils.augmentation_utils import augment_dataset_balanced
 
 # Variables globales de configuration pour l'entraînement
 # Modifiez ces valeurs pour ajuster l'entraînement
@@ -24,10 +25,10 @@ EARLY_STOP_PATIENCE = 5        # Patience pour l'arrêt anticipé (époques)
 REDUCE_LR_PATIENCE = 5         # Patience pour la réduction du taux d'apprentissage
 
 # Mode rapide pour les tests (mettre à True pour un entraînement plus rapide)
-QUICK_MODE = False
+QUICK_MODE = True
 if QUICK_MODE:
     IMG_SIZE = 64
-    EPOCHS = 3
+    EPOCHS = 10
     BATCH_SIZE = 32
 
 class CustomArgumentParser(argparse.ArgumentParser):
@@ -253,8 +254,18 @@ def main():
     if not os.path.exists(args.src):
         parser.error(f"Le dossier source '{args.src}' n'existe pas.")
     
+    # Équilibrage automatique des classes
+    print("Équilibrage des classes avec augmentation d'images...")
+    balanced_dir = os.path.join(os.path.dirname(args.src), "train_balanced")
+    if augment_dataset_balanced(args.src, balanced_dir):
+        train_directory = balanced_dir
+        print(f"Équilibrage terminé. Utilisation du dossier '{train_directory}' pour l'entraînement.")
+    else:
+        print("L'équilibrage des classes a échoué. Utilisation du dossier d'origine pour l'entraînement.")
+        train_directory = args.src
+    
     # Extraction des classes
-    classes = extract_classes(args.src)
+    classes = extract_classes(train_directory)
     if not classes:
         print("Aucune classe (sous-dossier) trouvée dans le répertoire source.")
         return
@@ -265,11 +276,11 @@ def main():
         print(f"- {cls}")
     print(f"Liste des classes sauvegardée dans: {json_path}")
 
-# Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
+    # Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
     img_size = (args.img_size, args.img_size)
     
     # Charger et prétraiter les données en récupérant aussi les chemins des fichiers
-    X, y, paths = load_and_preprocess_data(args.src, classes, img_size)
+    X, y, paths = load_and_preprocess_data(train_directory, classes, img_size)
     
     if len(X) == 0:
         print("Aucune image n'a pu être chargée. Vérifiez le répertoire source.")
@@ -287,7 +298,7 @@ def main():
     
     # Sauvegarder les fichiers holdout dans un dossier en conservant l'arborescence
     holdout_dir = "holdout"
-    save_holdout_files(paths_val, args.src, holdout_dir)
+    save_holdout_files(paths_val, train_directory, holdout_dir)
     print(f"Les images holdout ont été sauvegardées dans le dossier '{holdout_dir}'")
     
     # Entraînement du modèle
