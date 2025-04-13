@@ -8,6 +8,10 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from tensorflow import keras
 from Transformation import gaussian_blur, create_masked_image, _create_binary_mask
+from tqdm import tqdm
+
+# Taille des images attendue par le modèle (doit correspondre à l'entraînement)
+IMG_SIZE = 224
 
 class CustomArgumentParser(argparse.ArgumentParser):
     def error(self, message):
@@ -38,7 +42,7 @@ def load_model():
         print(f"Erreur lors du chargement du modèle: {e}")
         return None, None
 
-def preprocess_image(img_path, img_size=(224, 224)):
+def preprocess_image(img_path, img_size=(IMG_SIZE, IMG_SIZE)):
     """Prétraiter l'image pour la prédiction."""
     try:
         # Charger l'image
@@ -102,44 +106,117 @@ def display_results(original_img, transformed_img, pred_class, confidence):
     plt.axis('off')
     
     # Ajouter le texte de prédiction
-    plt.suptitle(f"Prédiction: {pred_class} (Confiance: {confidence:.2f}%)", fontsize=14)
+    plt.suptitle(f"Prédiction: {pred_class}", fontsize=14)
     
     plt.tight_layout()
     plt.show()
 
+def evaluate_directory(model, class_mapping, test_dir):
+    """Évaluer le modèle sur toutes les images d'un répertoire et enregistrer les résultats dans un fichier."""
+    total_images = 0
+    correct_predictions = 0
+    per_class_stats = {}
+    log_filepath = "evaluation_results.txt"
+
+    with open(log_filepath, "w") as log_file:
+        log_file.write(f"Évaluation du répertoire : {test_dir}\n")
+        log_file.write("-" * 60 + "\n")
+        print(f"Évaluation du répertoire : {test_dir}")
+        print("-" * 60)
+
+        # Parcourir les sous-dossiers (chaque sous-dossier doit porter le nom d'une classe)
+        for real_class in sorted(os.listdir(test_dir)):
+            class_dir = os.path.join(test_dir, real_class)
+            if not os.path.isdir(class_dir):
+                continue
+
+            image_files = [f for f in os.listdir(class_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+            if not image_files:
+                continue
+
+            log_line = f"Traitement de la classe : {real_class}\n"
+            print(log_line, end="")
+            log_file.write(log_line)
+            for img_file in image_files:
+                img_path = os.path.join(class_dir, img_file)
+                img_preprocessed, _ = preprocess_image(img_path)
+                if img_preprocessed is None:
+                    log_line = f"{img_path} | {real_class:<16} | PREPROC ERROR       | False\n"
+                    print(log_line, end="")
+                    log_file.write(log_line)
+                    continue
+
+                total_images += 1
+                pred_class, _ = predict_disease(model, class_mapping, img_preprocessed)
+                is_correct = (pred_class == real_class)
+                log_line = f"{img_path} | {real_class:<16} | {pred_class:<16} | {is_correct}\n"
+                print(log_line, end="")
+                log_file.write(log_line)
+
+                if real_class not in per_class_stats:
+                    per_class_stats[real_class] = {"total": 0, "correct": 0}
+                per_class_stats[real_class]["total"] += 1
+                if is_correct:
+                    correct_predictions += 1
+                    per_class_stats[real_class]["correct"] += 1
+
+        log_file.write("-" * 60 + "\n")
+        print("-" * 60)
+        if total_images > 0:
+            overall_accuracy = (correct_predictions / total_images) * 100
+            log_file.write("\nRésultat final:\n")
+            log_file.write(f"  Images testées       : {total_images}\n")
+            log_file.write(f"  Prédictions correctes: {correct_predictions}\n")
+            log_file.write(f"  Précision (Accuracy) : {overall_accuracy:.2f}%\n")
+            print(f"\nRésultat final:")
+            print(f"  Images testées       : {total_images}")
+            print(f"  Prédictions correctes: {correct_predictions}")
+            print(f"  Précision (Accuracy) : {overall_accuracy:.2f}%")
+            # Afficher le détail par classe
+            for cls, stats in per_class_stats.items():
+                class_accuracy = (stats["correct"] / stats["total"]) * 100 if stats["total"] > 0 else 0.0
+                detail_line = f"  {cls}: {stats['total']} images, précision: {class_accuracy:.2f}%\n"
+                log_file.write(detail_line)
+                print(detail_line, end="")
+        else:
+            log_file.write("Aucune image n'a pu être traitée.\n")
+            print("Aucune image n'a pu être traitée.")
+
 def main():
     parser = CustomArgumentParser(
-        description="Programme pour prédire la maladie d'une feuille à partir d'une image."
+        description="Programme pour prédire la maladie d'une feuille (mode image ou répertoire)."
     )
     parser.add_argument(
-        "image",
-        help="Chemin de l'image à analyser"
+        "input",
+        help="Chemin de l'image ou du répertoire à analyser"
     )
     args = parser.parse_args()
 
-    if not os.path.exists(args.image):
-        parser.error(f"L'image '{args.image}' n'existe pas.")
+    if not os.path.exists(args.input):
+        parser.error(f"Le chemin '{args.input}' n'existe pas.")
 
     # Charger le modèle et le mappage des classes
     model, class_mapping = load_model()
     if model is None or class_mapping is None:
         return
 
-    # Prétraiter l'image
-    img_preprocessed, transformed_img = preprocess_image(args.image)
-    if img_preprocessed is None:
-        return
+    # Si c'est un répertoire, on lance l'évaluation globale
+    if os.path.isdir(args.input):
+        evaluate_directory(model, class_mapping, args.input)
+    # Sinon, on effectue la prédiction sur une seule image avec affichage
+    elif os.path.isfile(args.input):
+        img_preprocessed, transformed_img = preprocess_image(args.input)
+        if img_preprocessed is None:
+            return
 
-    # Faire la prédiction
-    pred_class, confidence = predict_disease(model, class_mapping, img_preprocessed)
+        pred_class, confidence = predict_disease(model, class_mapping, img_preprocessed)
 
-    # Charger l'image originale pour l'affichage
-    original_img = cv2.imread(args.image)
-
-    # Afficher les résultats
-    display_results(original_img, transformed_img, pred_class, confidence)
-    print(f"Prédiction: {pred_class}")
-    print(f"Confiance: {confidence:.2f}%")
+        original_img = cv2.imread(args.input)
+        display_results(original_img, transformed_img, pred_class, confidence)
+        print(f"Prédiction: {pred_class}")
+        print(f"Confiance: {confidence:.2f}%")
+    else:
+        parser.error("Le chemin spécifié n'est ni un fichier ni un répertoire.")
 
 if __name__ == "__main__":
     main()

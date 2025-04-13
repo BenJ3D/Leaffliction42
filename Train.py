@@ -3,6 +3,7 @@ import argparse
 import sys
 import json
 import numpy as np
+import shutil # copie fichier
 from tensorflow import keras
 from tensorflow.keras import layers, models, optimizers
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
@@ -12,14 +13,14 @@ import cv2
 from tqdm import tqdm
 
 # Variables globales de configuration pour l'entraînement
-# Modifiez ces valeurs pour ajuster l'entraînement sans changer le code
+# Modifiez ces valeurs pour ajuster l'entraînement
 IMG_SIZE = 224                 # Taille des images (hauteur et largeur)
 EPOCHS = 50                    # Nombre d'époques d'entraînement
 BATCH_SIZE = 32                # Taille du lot pour l'entraînement
 LEARNING_RATE = 0.001          # Taux d'apprentissage initial
 DROPOUT_RATE = 0.5             # Taux de dropout pour éviter le surapprentissage
 VALIDATION_SPLIT = 0.2         # Proportion de données pour la validation
-EARLY_STOP_PATIENCE = 5       # Patience pour l'arrêt anticipé (époques)
+EARLY_STOP_PATIENCE = 5        # Patience pour l'arrêt anticipé (époques)
 REDUCE_LR_PATIENCE = 5         # Patience pour la réduction du taux d'apprentissage
 
 # Mode rapide pour les tests (mettre à True pour un entraînement plus rapide)
@@ -78,9 +79,12 @@ def create_cnn_model(input_shape, num_classes):
     return model
 
 def load_and_preprocess_data(directory, classes, img_size=(IMG_SIZE, IMG_SIZE)):
-    """Load images from directory and preprocess them."""
+    """Load images from directory and preprocess them.
+       Retourne aussi la liste des chemins d'origine pour chaque image.
+    """
     X = []
     y = []
+    file_paths = []  # Nouvelle liste pour stocker les chemins d'origine
     
     print("Chargement et prétraitement des images...")
     for class_idx, class_name in enumerate(classes):
@@ -94,7 +98,6 @@ def load_and_preprocess_data(directory, classes, img_size=(IMG_SIZE, IMG_SIZE)):
         for img_file in tqdm(class_files, desc=class_name):
             img_path = os.path.join(class_dir, img_file)
             try:
-                # Charger et redimensionner l'image
                 img = cv2.imread(img_path)
                 if img is None:
                     print(f"Impossible de charger l'image: {img_path}")
@@ -102,16 +105,27 @@ def load_and_preprocess_data(directory, classes, img_size=(IMG_SIZE, IMG_SIZE)):
                     
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 img_resized = cv2.resize(img, img_size)
-                
-                # Normaliser l'image
                 img_normalized = img_resized / 255.0
                 
                 X.append(img_normalized)
                 y.append(class_idx)
+                file_paths.append(img_path)  # Sauvegarder le chemin de l'image
             except Exception as e:
                 print(f"Erreur lors du traitement de l'image {img_path}: {e}")
     
-    return np.array(X), np.array(y)
+    return np.array(X), np.array(y), file_paths
+
+def save_holdout_files(file_paths, src_dir, output_dir="holdout"):
+    """Enregistrer les images holdout en conservant l'arborescence du dossier source."""
+    for file_path in file_paths:
+        # Calculer le chemin relatif par rapport au dossier source
+        rel_path = os.path.relpath(file_path, src_dir)
+        dest_path = os.path.join(output_dir, rel_path)
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+        try:
+            shutil.copy(file_path, dest_path)
+        except Exception as e:
+            print(f"Erreur lors de la copie du fichier {file_path}: {e}")
 
 def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(IMG_SIZE, IMG_SIZE)):
     """Train the CNN model."""
@@ -220,7 +234,7 @@ def main():
         "src",
         help="Chemin du dossier récursif contenant toutes les images d'entrainement"
     )
-    
+
     # Permettre de remplacer les variables globales par des arguments
     parser.add_argument(
         "--img_size", 
@@ -239,7 +253,7 @@ def main():
     if not os.path.exists(args.src):
         parser.error(f"Le dossier source '{args.src}' n'existe pas.")
     
-    # Extract classes from subdirectories
+    # Extraction des classes
     classes = extract_classes(args.src)
     if not classes:
         print("Aucune classe (sous-dossier) trouvée dans le répertoire source.")
@@ -251,11 +265,11 @@ def main():
         print(f"- {cls}")
     print(f"Liste des classes sauvegardée dans: {json_path}")
 
-    # Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
+# Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
     img_size = (args.img_size, args.img_size)
     
-    # Charger et prétraiter les données
-    X, y = load_and_preprocess_data(args.src, classes, img_size)
+    # Charger et prétraiter les données en récupérant aussi les chemins des fichiers
+    X, y, paths = load_and_preprocess_data(args.src, classes, img_size)
     
     if len(X) == 0:
         print("Aucune image n'a pu être chargée. Vérifiez le répertoire source.")
@@ -263,16 +277,20 @@ def main():
         
     print(f"\nEnsemble de données chargé: {len(X)} images, {len(classes)} classes")
     
-    # Diviser les données en ensembles d'entraînement et de validation
-    # Utiliser l'argument qui peut remplacer la variable globale
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=args.val_split, stratify=y, random_state=42
+    # Séparation en ensembles d'entraînement et de holdout (validation)
+    X_train, X_val, y_train, y_val, paths_train, paths_val = train_test_split(
+        X, y, paths, test_size=args.val_split, stratify=y, random_state=42
     )
     
     print(f"Ensemble d'entraînement: {len(X_train)} images")
-    print(f"Ensemble de validation: {len(X_val)} images")
+    print(f"Ensemble de holdout: {len(X_val)} images")
     
-    # Entraîner le modèle
+    # Sauvegarder les fichiers holdout dans un dossier en conservant l'arborescence
+    holdout_dir = "holdout"
+    save_holdout_files(paths_val, args.src, holdout_dir)
+    print(f"Les images holdout ont été sauvegardées dans le dossier '{holdout_dir}'")
+    
+    # Entraînement du modèle
     model, history = train_model(X_train, y_train, X_val, y_val, len(classes), img_size)
     
     # Sauvegarder le modèle
