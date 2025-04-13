@@ -15,22 +15,25 @@ from utils.augmentation_utils import augment_dataset_balanced
 
 # Variables globales de configuration pour l'entraînement
 # Modifiez ces valeurs pour ajuster l'entraînement
-IMG_SIZE = 224                 # Taille des images (hauteur et largeur)
+IMG_SIZE = 256                 # Taille des images (hauteur et largeur)
 EPOCHS = 50                    # Nombre d'époques d'entraînement
 BATCH_SIZE = 32                # Taille du lot pour l'entraînement
 LEARNING_RATE = 0.001          # Taux d'apprentissage initial
 DROPOUT_RATE = 0.5             # Taux de dropout pour éviter le surapprentissage
-VALIDATION_SPLIT = 0.2         # Proportion de données pour la validation
 EARLY_STOP_PATIENCE = 5        # Patience pour l'arrêt anticipé (époques)
 REDUCE_LR_PATIENCE = 5         # Patience pour la réduction du taux d'apprentissage
 
 # Mode rapide pour les tests (mettre à True pour un entraînement plus rapide)
 QUICK_MODE = True
 if QUICK_MODE:
-    IMG_SIZE = 64
-    EPOCHS = 10
+    IMG_SIZE = 82
+    EPOCHS = 12
     BATCH_SIZE = 32
+    LEARNING_RATE = 0.0018          # Taux d'apprentissage initial
 
+
+
+VALIDATION_SPLIT=0.2
 class CustomArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f"Erreur: {message}\n")
@@ -48,7 +51,7 @@ def extract_classes(directory):
 def save_classes_to_json(classes):
     """Save the class names to a JSON file in the current working directory."""
     classes_json = {"classes": classes}
-    json_path = os.path.join(os.getcwd(), "classes.json")
+    json_path = os.path.join(os.getcwd(), "train/classes.json")
     with open(json_path, 'w') as f:
         json.dump(classes_json, f, indent=4)
     return json_path
@@ -63,7 +66,7 @@ def create_cnn_model(input_shape, num_classes):
         layers.Conv2D(128, (3, 3), activation='relu'),
         layers.MaxPooling2D((2, 2)),
         layers.Flatten(),
-        layers.Dropout(DROPOUT_RATE),  # Utiliser la variable globale
+        layers.Dropout(DROPOUT_RATE),
         layers.Dense(128, activation='relu'),
         layers.Dense(num_classes, activation='softmax')
     ])
@@ -116,7 +119,7 @@ def load_and_preprocess_data(directory, classes, img_size=(IMG_SIZE, IMG_SIZE)):
     
     return np.array(X), np.array(y), file_paths
 
-def save_holdout_files(file_paths, src_dir, output_dir="holdout"):
+def save_images_files(file_paths, src_dir, output_dir="holdout"):
     """Enregistrer les images holdout en conservant l'arborescence du dossier source."""
     for file_path in file_paths:
         # Calculer le chemin relatif par rapport au dossier source
@@ -206,7 +209,7 @@ def plot_training_history(history):
     ax2.legend(['Train', 'Validation'], loc='upper left')
     
     plt.tight_layout()
-    plt.savefig('training_history.png')
+    plt.savefig('train/training_history.png')
     print("Graphique d'apprentissage sauvegardé dans 'training_history.png'")
     plt.close()
 
@@ -236,19 +239,6 @@ def main():
         help="Chemin du dossier récursif contenant toutes les images d'entrainement"
     )
 
-    # Permettre de remplacer les variables globales par des arguments
-    parser.add_argument(
-        "--img_size", 
-        type=int, 
-        default=IMG_SIZE, 
-        help=f"Taille des images (défaut: {IMG_SIZE})"
-    )
-    parser.add_argument(
-        "--val_split", 
-        type=float, 
-        default=VALIDATION_SPLIT, 
-        help=f"Proportion de données pour la validation (défaut: {VALIDATION_SPLIT})"
-    )
     args = parser.parse_args()
 
     if not os.path.exists(args.src):
@@ -256,7 +246,7 @@ def main():
     
     # Équilibrage automatique des classes
     print("Équilibrage des classes avec augmentation d'images...")
-    balanced_dir = os.path.join(os.path.dirname(args.src), "train_balanced")
+    balanced_dir = os.path.join(os.path.dirname(args.src), "train/augmented_directory")
     if augment_dataset_balanced(args.src, balanced_dir):
         train_directory = balanced_dir
         print(f"Équilibrage terminé. Utilisation du dossier '{train_directory}' pour l'entraînement.")
@@ -277,7 +267,7 @@ def main():
     print(f"Liste des classes sauvegardée dans: {json_path}")
 
     # Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
-    img_size = (args.img_size, args.img_size)
+    img_size = (IMG_SIZE, IMG_SIZE)
     
     # Charger et prétraiter les données en récupérant aussi les chemins des fichiers
     X, y, paths = load_and_preprocess_data(train_directory, classes, img_size)
@@ -288,21 +278,50 @@ def main():
         
     print(f"\nEnsemble de données chargé: {len(X)} images, {len(classes)} classes")
     
+    # # Séparation en 60% train et 40% (validation + test)
+    # X_train, X_temp, y_train, y_temp, paths_train, paths_temp = train_test_split(
+    #     X, y, paths, test_size=0.4, stratify=y, random_state=42
+    # )
+    
+    # # Séparation des 40% restants en validation (50%) et holdout (50%)
+    # # Ce qui donne au final 20% validation, 20% holdout
+    # X_val, X_test, y_val, y_test, paths_val, paths_test = train_test_split(
+    #     X_temp, y_temp, paths_temp, test_size=0.5, stratify=y_temp, random_state=42
+    
     # Séparation en ensembles d'entraînement et de holdout (validation)
     X_train, X_val, y_train, y_val, paths_train, paths_val = train_test_split(
-        X, y, paths, test_size=args.val_split, stratify=y, random_state=42
+        X, y, paths, test_size=VALIDATION_SPLIT, stratify=y, random_state=42
     )
+
+
     
-    print(f"Ensemble d'entraînement: {len(X_train)} images")
-    print(f"Ensemble de holdout: {len(X_val)} images")
+    print(f"Ensemble d'entraînement: {len(X_train)} images ({len(X_train)/len(X)*100:.1f}%)")
+    print(f"Ensemble de validation: {len(X_val)} images ({len(X_val)/len(X)*100:.1f}%)")
+    # print(f"Ensemble de holdout: {len(X_test)} images ({len(X_test)/len(X)*100:.1f}%)")
     
-    # Sauvegarder les fichiers holdout dans un dossier en conservant l'arborescence
-    holdout_dir = "holdout"
-    save_holdout_files(paths_val, train_directory, holdout_dir)
-    print(f"Les images holdout ont été sauvegardées dans le dossier '{holdout_dir}'")
+    # Sauvegarder les fichiers de train dans un dossier en conservant l'arborescence
+    train_dir = "train/train_dir"
+    save_images_files(paths_train, train_directory, train_dir)
+    print(f"Les images de validation ont été sauvegardées dans le dossier '{train_dir}'")
+    
+    # Sauvegarder les fichiers de validation dans un dossier en conservant l'arborescence
+    validation_dir = "train/validation_dir"
+    save_images_files(paths_val, train_directory, validation_dir)
+    print(f"Les images de validation ont été sauvegardées dans le dossier '{validation_dir}'")
+    
+    # # Sauvegarder les fichiers holdout dans un dossier en conservant l'arborescence
+    # holdout_dir = "train/holdout_dir"
+    # save_images_files(paths_test, train_directory, holdout_dir)
+    # print(f"Les images holdout ont été sauvegardées dans le dossier '{holdout_dir}'")
     
     # Entraînement du modèle
     model, history = train_model(X_train, y_train, X_val, y_val, len(classes), img_size)
+    
+    # # Évaluation finale sur l'ensemble holdout
+    # print("\nÉvaluation finale sur l'ensemble holdout...")
+    # y_test_cat = keras.utils.to_categorical(y_val, len(classes))
+    # test_loss, test_acc = model.evaluate(X_val, y_test_cat)
+    # print(f"Précision sur l'ensemble holdout: {test_acc:.4f}")
     
     # Sauvegarder le modèle
     model_path = save_model(model, classes)
