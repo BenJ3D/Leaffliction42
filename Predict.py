@@ -19,10 +19,15 @@ class CustomArgumentParser(argparse.ArgumentParser):
         sys.stderr.write(f"Erreur: {message}\n")
         sys.exit(2)
 
-def load_model():
+def load_model(model_path=None):
     """Charger le modèle entraîné et le mappage des classes."""
-    model_path = 'model/leaffliction_model.keras'
-    class_mapping_path = 'model/class_mapping.json'
+    if model_path is None:
+        model_path = 'model/leaffliction_model.keras'
+        class_mapping_path = 'model/class_mapping.json'
+    else:
+        # Trouver le répertoire du modèle pour y chercher le fichier de mappage
+        model_dir = os.path.dirname(model_path)
+        class_mapping_path = os.path.join(model_dir, 'class_mapping.json')
     
     if not os.path.exists(model_path):
         print(f"Erreur: Le modèle '{model_path}' n'existe pas.")
@@ -216,6 +221,10 @@ def main():
         default=100,
         help="Pourcentage d'images à évaluer (1-100)"
     )
+    parser.add_argument(
+        "--model",
+        help="Chemin vers le modèle à utiliser (le fichier class_mapping.json doit être dans le même répertoire)"
+    )
     args = parser.parse_args()
 
     # Vérification de la validité du pourcentage
@@ -226,21 +235,22 @@ def main():
         parser.error(f"Le chemin '{args.input}' n'existe pas.")
 
     # Charger le modèle et le mappage des classes
-    model, class_mapping = load_model()
+    model, class_mapping = load_model(args.model)
     if model is None or class_mapping is None:
         return
 
     # Si c'est un répertoire, on lance l'évaluation globale
     if os.path.isdir(args.input):
-        evaluate_directory(model, class_mapping, args.input, args.percentage)
+        evaluate_directory(model, class_mapping, args.input, args.percentage)    
     # Sinon, on effectue la prédiction sur une seule image avec affichage
     elif os.path.isfile(args.input):
+        # Traiter une seule image
         img_preprocessed, transformed_img = preprocess_image(args.input)
         if img_preprocessed is None:
+            print(f"Erreur: Impossible de prétraiter l'image '{args.input}'.")
             return
-
+            
         pred_class, confidence = predict_disease(model, class_mapping, img_preprocessed)
-
         original_img = cv2.imread(args.input)
         display_results(original_img, transformed_img, pred_class, confidence)
         print(f"Prédiction: {pred_class}")
