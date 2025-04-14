@@ -20,18 +20,16 @@ EPOCHS = 50                    # Nombre d'époques d'entraînement
 BATCH_SIZE = 32                # Taille du lot pour l'entraînement
 LEARNING_RATE = 0.001          # Taux d'apprentissage initial
 DROPOUT_RATE = 0.5             # Taux de dropout pour éviter le surapprentissage
-EARLY_STOP_PATIENCE = 5        # Patience pour l'arrêt anticipé (époques)
-REDUCE_LR_PATIENCE = 5         # Patience pour la réduction du taux d'apprentissage
+EARLY_STOP_PATIENCE = 10       # Patience pour l'arrêt anticipé (époques)
+REDUCE_LR_PATIENCE = 10        # Patience pour la réduction du taux d'apprentissage
 
-# Mode rapide pour les tests (mettre à True pour un entraînement plus rapide)
-QUICK_MODE = True
+# Mode rapide pour les tests (mettre à True pour un entraînement plus rapide mais moins accuracy)
+QUICK_MODE = False
 if QUICK_MODE:
-    IMG_SIZE = 82
-    EPOCHS = 12
+    IMG_SIZE = 64
+    EPOCHS = 15
     BATCH_SIZE = 32
-    LEARNING_RATE = 0.0018          # Taux d'apprentissage initial
-
-
+    LEARNING_RATE = 0.0018 
 
 VALIDATION_SPLIT=0.2
 class CustomArgumentParser(argparse.ArgumentParser):
@@ -40,7 +38,7 @@ class CustomArgumentParser(argparse.ArgumentParser):
         sys.exit(2)
 
 def extract_classes(directory):
-    """Extract class names from subdirectories."""
+    """Extrait les noms de classes à partir des sous-dossiers d'un répertoire donné."""
     classes = []
     for item in os.listdir(directory):
         item_path = os.path.join(directory, item)
@@ -49,15 +47,16 @@ def extract_classes(directory):
     return sorted(classes)
 
 def save_classes_to_json(classes):
-    """Save the class names to a JSON file in the current working directory."""
+    """Sauvegarde les noms de classes dans un fichier JSON"""
     classes_json = {"classes": classes}
+    os.makedirs("train", exist_ok=True)
     json_path = os.path.join(os.getcwd(), "train/classes.json")
     with open(json_path, 'w') as f:
         json.dump(classes_json, f, indent=4)
     return json_path
 
 def create_cnn_model(input_shape, num_classes):
-    """Create a CNN model for image classification."""
+    """Créé un modèle CNN pour la classification d'images."""
     model = models.Sequential([
         layers.Conv2D(32, (3, 3), activation='relu', input_shape=input_shape),
         layers.MaxPooling2D((2, 2)),
@@ -71,7 +70,6 @@ def create_cnn_model(input_shape, num_classes):
         layers.Dense(num_classes, activation='softmax')
     ])
     
-    # Utiliser le taux d'apprentissage global
     optimizer = keras.optimizers.Adam(learning_rate=LEARNING_RATE)
     
     model.compile(
@@ -82,67 +80,70 @@ def create_cnn_model(input_shape, num_classes):
     
     return model
 
-def load_and_preprocess_data(directory, classes, img_size=(IMG_SIZE, IMG_SIZE)):
-    """Load images from directory and preprocess them.
-       Retourne aussi la liste des chemins d'origine pour chaque image.
+def split_dataset_and_save(src_dir, train_dir, val_dir, validation_split=VALIDATION_SPLIT):
     """
-    X = []
-    y = []
-    file_paths = []  # Nouvelle liste pour stocker les chemins d'origine
+    Divise le dataset en ensembles d'entraînement et de validation
+    en sauvegardant les fichiers dans les dossiers correspondants.
+    Renvoie le nombre de fichiers pour chaque ensemble.
+    """
+    os.makedirs(train_dir, exist_ok=True)
+    os.makedirs(val_dir, exist_ok=True)
     
-    print("Chargement et prétraitement des images...")
-    for class_idx, class_name in enumerate(classes):
-        class_dir = os.path.join(directory, class_name)
+    train_count = 0
+    val_count = 0
+    
+    # Parcourir les classes (sous-dossiers)
+    for class_name in os.listdir(src_dir):
+        class_dir = os.path.join(src_dir, class_name)
         if not os.path.isdir(class_dir):
             continue
-            
-        print(f"Traitement de la classe '{class_name}'...")
-        class_files = [f for f in os.listdir(class_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
         
-        for img_file in tqdm(class_files, desc=class_name):
-            img_path = os.path.join(class_dir, img_file)
-            try:
-                img = cv2.imread(img_path)
-                if img is None:
-                    print(f"Impossible de charger l'image: {img_path}")
-                    continue
-                    
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                img_resized = cv2.resize(img, img_size)
-                img_normalized = img_resized / 255.0
-                
-                X.append(img_normalized)
-                y.append(class_idx)
-                file_paths.append(img_path)  # Sauvegarder le chemin de l'image
-            except Exception as e:
-                print(f"Erreur lors du traitement de l'image {img_path}: {e}")
+        # Créer les dossiers de sortie pour cette classe
+        train_class_dir = os.path.join(train_dir, class_name)
+        val_class_dir = os.path.join(val_dir, class_name)
+        os.makedirs(train_class_dir, exist_ok=True)
+        os.makedirs(val_class_dir, exist_ok=True)
+        
+        # Lister les images
+        image_files = [f for f in os.listdir(class_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        
+        # Mélanger aléatoirement
+        np.random.seed(42)
+        np.random.shuffle(image_files)
+        
+        # Calculer l'index de séparation
+        split_idx = int(len(image_files) * (1 - validation_split))
+        
+        # Séparer en ensembles d'entraînement et de validation
+        train_files = image_files[:split_idx]
+        val_files = image_files[split_idx:]
+        
+        train_count += len(train_files)
+        val_count += len(val_files)
+        
+        print(f"Classe '{class_name}': {len(train_files)} images d'entraînement, {len(val_files)} images de validation")
+        
+        # Copier les fichiers d'entraînement
+        for img_file in tqdm(train_files, desc=f"Copie train {class_name}"):
+            src_path = os.path.join(class_dir, img_file)
+            dst_path = os.path.join(train_class_dir, img_file)
+            shutil.copy2(src_path, dst_path)
+        
+        # Copier les fichiers de validation
+        for img_file in tqdm(val_files, desc=f"Copie validation {class_name}"):
+            src_path = os.path.join(class_dir, img_file)
+            dst_path = os.path.join(val_class_dir, img_file)
+            shutil.copy2(src_path, dst_path)
     
-    return np.array(X), np.array(y), file_paths
+    return train_count, val_count
 
-def save_images_files(file_paths, src_dir, output_dir="holdout"):
-    """Enregistrer les images holdout en conservant l'arborescence du dossier source."""
-    for file_path in file_paths:
-        # Calculer le chemin relatif par rapport au dossier source
-        rel_path = os.path.relpath(file_path, src_dir)
-        dest_path = os.path.join(output_dir, rel_path)
-        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-        try:
-            shutil.copy(file_path, dest_path)
-        except Exception as e:
-            print(f"Erreur lors de la copie du fichier {file_path}: {e}")
-
-def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(IMG_SIZE, IMG_SIZE)):
-    """Train the CNN model."""
-    # Convertir les étiquettes en format catégorique
-    y_train_cat = keras.utils.to_categorical(y_train, num_classes)
-    y_val_cat = keras.utils.to_categorical(y_val, num_classes)
-    
-    # Créer le modèle
-    model = create_cnn_model(input_shape=(img_size[0], img_size[1], 3), num_classes=num_classes)
-    print(model.summary())
-    
-    # Data augmentation pour l'entraînement
-    datagen = ImageDataGenerator(
+def train_with_generator(train_dir, val_dir, num_classes, img_size=(IMG_SIZE, IMG_SIZE)):
+    """
+    Entraîne le modèle en utilisant des générateurs pour économiser la mémoire.
+    """
+    # Générateur pour l'ensemble d'entraînement avec data augmentation
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,
         rotation_range=20,
         width_shift_range=0.1,
         height_shift_range=0.1,
@@ -151,9 +152,32 @@ def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(IMG_SIZE,
         horizontal_flip=True,
         fill_mode='nearest'
     )
-    datagen.fit(X_train)
     
-    # Callbacks pour améliorer l'entraînement - utiliser les variables globales
+    # Générateur pour l'ensemble de validation (seulement normalisation)
+    val_datagen = ImageDataGenerator(rescale=1./255)
+    
+    # Charger les images à partir des dossiers
+    train_generator = train_datagen.flow_from_directory(
+        train_dir,
+        target_size=img_size,
+        batch_size=BATCH_SIZE,
+        class_mode='categorical',
+        shuffle=True
+    )
+    
+    validation_generator = val_datagen.flow_from_directory(
+        val_dir,
+        target_size=img_size,
+        batch_size=BATCH_SIZE,
+        class_mode='categorical',
+        shuffle=False
+    )
+    
+    # Créer et compiler le modèle
+    model = create_cnn_model(input_shape=(img_size[0], img_size[1], 3), num_classes=num_classes)
+    print(model.summary())
+    
+    # Callbacks
     callbacks = [
         keras.callbacks.EarlyStopping(
             patience=EARLY_STOP_PATIENCE, 
@@ -167,26 +191,37 @@ def train_model(X_train, y_train, X_val, y_val, num_classes, img_size=(IMG_SIZE,
         )
     ]
     
-    # Entraînement du modèle - utiliser les variables globales
+    # Entraîner le modèle
     print("\nDébut de l'entraînement du modèle...")
     print(f"Configuration: epochs={EPOCHS}, batch_size={BATCH_SIZE}, learning_rate={LEARNING_RATE}")
+    
+    # Calculer steps_per_epoch et validation_steps
+    steps_per_epoch = train_generator.samples // BATCH_SIZE
+    if steps_per_epoch == 0:
+        steps_per_epoch = 1
+    
+    validation_steps = validation_generator.samples // BATCH_SIZE
+    if validation_steps == 0:
+        validation_steps = 1
+    
     history = model.fit(
-        datagen.flow(X_train, y_train_cat, batch_size=BATCH_SIZE),
-        steps_per_epoch=len(X_train) // BATCH_SIZE,
+        train_generator,
+        steps_per_epoch=steps_per_epoch,
         epochs=EPOCHS,
-        validation_data=(X_val, y_val_cat),
+        validation_data=validation_generator,
+        validation_steps=validation_steps,
         callbacks=callbacks
     )
     
     # Évaluation du modèle
     print("\nÉvaluation du modèle...")
-    val_loss, val_acc = model.evaluate(X_val, y_val_cat)
+    val_loss, val_acc = model.evaluate(validation_generator, steps=validation_steps)
     print(f"Précision sur l'ensemble de validation: {val_acc:.4f}")
     
     # Tracer les courbes d'apprentissage
     plot_training_history(history)
     
-    return model, history
+    return model, history, train_generator.class_indices
 
 def plot_training_history(history):
     """Plot training & validation accuracy and loss."""
@@ -213,17 +248,19 @@ def plot_training_history(history):
     print("Graphique d'apprentissage sauvegardé dans 'training_history.png'")
     plt.close()
 
-def save_model(model, classes):
+def save_model(model, class_indices):
     """Save the trained model and class mappings."""
-    # Créer un dossier 'model' s'il n'existe pas
+    # Init dossier 'model'
     os.makedirs('model', exist_ok=True)
     
-    # Sauvegarder le modèle au format Keras natif
+    # Save modèle au format Keras
     model_path = 'model/leaffliction_model.keras'
     model.save(model_path)
     
-    # Sauvegarder le mappage des classes
-    class_mapping = {i: class_name for i, class_name in enumerate(classes)}
+    # Inverser le dictionnaire class_indices pour obtenir index -> nom_classe
+    class_mapping = {str(idx): class_name for class_name, idx in class_indices.items()}
+    
+    # Save le mappage des classes
     with open('model/class_mapping.json', 'w') as f:
         json.dump(class_mapping, f, indent=4)
     
@@ -244,9 +281,12 @@ def main():
     if not os.path.exists(args.src):
         parser.error(f"Le dossier source '{args.src}' n'existe pas.")
     
+    # Création des dossiers nécessaires
+    os.makedirs("train", exist_ok=True)
+    
     # Équilibrage automatique des classes
     print("Équilibrage des classes avec augmentation d'images...")
-    balanced_dir = os.path.join(os.path.dirname(args.src), "train/augmented_directory")
+    balanced_dir = os.path.join("train", "augmented_directory")
     if augment_dataset_balanced(args.src, balanced_dir):
         train_directory = balanced_dir
         print(f"Équilibrage terminé. Utilisation du dossier '{train_directory}' pour l'entraînement.")
@@ -265,66 +305,28 @@ def main():
     for cls in classes:
         print(f"- {cls}")
     print(f"Liste des classes sauvegardée dans: {json_path}")
-
-    # Image preprocessing settings - Utiliser l'argument qui peut remplacer la variable globale
+    
+    # Image preprocessing settings
     img_size = (IMG_SIZE, IMG_SIZE)
     
-    # Charger et prétraiter les données en récupérant aussi les chemins des fichiers
-    X, y, paths = load_and_preprocess_data(train_directory, classes, img_size)
-    
-    if len(X) == 0:
-        print("Aucune image n'a pu être chargée. Vérifiez le répertoire source.")
-        return
-        
-    print(f"\nEnsemble de données chargé: {len(X)} images, {len(classes)} classes")
-    
-    # # Séparation en 60% train et 40% (validation + test)
-    # X_train, X_temp, y_train, y_temp, paths_train, paths_temp = train_test_split(
-    #     X, y, paths, test_size=0.4, stratify=y, random_state=42
-    # )
-    
-    # # Séparation des 40% restants en validation (50%) et holdout (50%)
-    # # Ce qui donne au final 20% validation, 20% holdout
-    # X_val, X_test, y_val, y_test, paths_val, paths_test = train_test_split(
-    #     X_temp, y_temp, paths_temp, test_size=0.5, stratify=y_temp, random_state=42
-    
-    # Séparation en ensembles d'entraînement et de holdout (validation)
-    X_train, X_val, y_train, y_val, paths_train, paths_val = train_test_split(
-        X, y, paths, test_size=VALIDATION_SPLIT, stratify=y, random_state=42
-    )
-
-
-    
-    print(f"Ensemble d'entraînement: {len(X_train)} images ({len(X_train)/len(X)*100:.1f}%)")
-    print(f"Ensemble de validation: {len(X_val)} images ({len(X_val)/len(X)*100:.1f}%)")
-    # print(f"Ensemble de holdout: {len(X_test)} images ({len(X_test)/len(X)*100:.1f}%)")
-    
-    # Sauvegarder les fichiers de train dans un dossier en conservant l'arborescence
+    # Dossiers pour l'entraînement et la validation
     train_dir = "train/train_dir"
-    save_images_files(paths_train, train_directory, train_dir)
-    print(f"Les images de validation ont été sauvegardées dans le dossier '{train_dir}'")
-    
-    # Sauvegarder les fichiers de validation dans un dossier en conservant l'arborescence
     validation_dir = "train/validation_dir"
-    save_images_files(paths_val, train_directory, validation_dir)
-    print(f"Les images de validation ont été sauvegardées dans le dossier '{validation_dir}'")
     
-    # # Sauvegarder les fichiers holdout dans un dossier en conservant l'arborescence
-    # holdout_dir = "train/holdout_dir"
-    # save_images_files(paths_test, train_directory, holdout_dir)
-    # print(f"Les images holdout ont été sauvegardées dans le dossier '{holdout_dir}'")
+    # Diviser le dataset et save les images dans les dossiers correspondants
+    print("\nDivision et sauvegarde du dataset en ensembles d'entraînement et de validation...")
+    train_count, val_count = split_dataset_and_save(train_directory, train_dir, validation_dir, VALIDATION_SPLIT)
     
-    # Entraînement du modèle
-    model, history = train_model(X_train, y_train, X_val, y_val, len(classes), img_size)
+    total_count = train_count + val_count
+    print(f"\nEnsemble de données divisé: {total_count} images au total")
+    print(f"Ensemble d'entraînement: {train_count} images ({train_count/total_count*100:.1f}%)")
+    print(f"Ensemble de validation: {val_count} images ({val_count/total_count*100:.1f}%)")
     
-    # # Évaluation finale sur l'ensemble holdout
-    # print("\nÉvaluation finale sur l'ensemble holdout...")
-    # y_test_cat = keras.utils.to_categorical(y_val, len(classes))
-    # test_loss, test_acc = model.evaluate(X_val, y_test_cat)
-    # print(f"Précision sur l'ensemble holdout: {test_acc:.4f}")
+    # Entraîner le modèle avec les générateurs d'images
+    model, history, class_indices = train_with_generator(train_dir, validation_dir, len(classes), img_size)
     
-    # Sauvegarder le modèle
-    model_path = save_model(model, classes)
+    # Save le modèle
+    model_path = save_model(model, class_indices)
     
     print(f"\nEntraînement terminé! Modèle sauvegardé dans: {model_path}")
     print("Vous pouvez maintenant utiliser ce modèle pour faire des prédictions avec Predict.py")
