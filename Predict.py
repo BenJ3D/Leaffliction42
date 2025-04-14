@@ -11,8 +11,7 @@ from Transformation import gaussian_blur, create_masked_image, _create_binary_ma
 from tqdm import tqdm
 
 # Taille des images attendue par le modèle (doit correspondre à l'entraînement)
-# IMG_SIZE = 256
-IMG_SIZE = 82 #mode train rapid TODO: remettre à 256 (final train)
+IMG_SIZE = 256
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 class CustomArgumentParser(argparse.ArgumentParser):
@@ -114,8 +113,15 @@ def display_results(original_img, transformed_img, pred_class, confidence):
     plt.tight_layout()
     plt.show()
 
-def evaluate_directory(model, class_mapping, test_dir):
-    """Évaluer le modèle sur toutes les images d'un répertoire et enregistrer les résultats dans un fichier."""
+def evaluate_directory(model, class_mapping, test_dir, percentage=100):
+    """Évaluer le modèle sur toutes les images d'un répertoire et enregistrer les résultats dans un fichier.
+    
+    Args:
+        model: Le modèle à évaluer
+        class_mapping: Le mappage des classes
+        test_dir: Le répertoire contenant les images de test
+        percentage: Le pourcentage d'images à évaluer (1-100)
+    """
     total_images = 0
     correct_predictions = 0
     per_class_stats = {}
@@ -123,8 +129,10 @@ def evaluate_directory(model, class_mapping, test_dir):
 
     with open(log_filepath, "w") as log_file:
         log_file.write(f"Évaluation du répertoire : {test_dir}\n")
+        log_file.write(f"Pourcentage d'images évaluées : {percentage}%\n")
         log_file.write("-" * 60 + "\n")
         print(f"Évaluation du répertoire : {test_dir}")
+        print(f"Pourcentage d'images évaluées : {percentage}%")
         print("-" * 60)
 
         # Parcourir les sous-dossiers (chaque sous-dossier doit porter le nom d'une classe)
@@ -136,6 +144,12 @@ def evaluate_directory(model, class_mapping, test_dir):
             image_files = [f for f in os.listdir(class_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
             if not image_files:
                 continue
+                
+            # Sélectionner un sous-ensemble des images en fonction du pourcentage
+            if percentage < 100:
+                np.random.seed(42)  # Pour la reproductibilité
+                selected_count = max(1, int(len(image_files) * percentage / 100))
+                image_files = np.random.choice(image_files, selected_count, replace=False).tolist()
 
             log_line = f"Traitement de la classe : {real_class}\n"
             print(log_line, end="")
@@ -196,7 +210,17 @@ def main():
         "input",
         help="Chemin de l'image ou du répertoire à analyser"
     )
+    parser.add_argument(
+        "--percentage",
+        type=int,
+        default=100,
+        help="Pourcentage d'images à évaluer (1-100)"
+    )
     args = parser.parse_args()
+
+    # Vérification de la validité du pourcentage
+    if args.percentage < 1 or args.percentage > 100:
+        parser.error("Le pourcentage doit être compris entre 1 et 100.")
 
     if not os.path.exists(args.input):
         parser.error(f"Le chemin '{args.input}' n'existe pas.")
@@ -208,7 +232,7 @@ def main():
 
     # Si c'est un répertoire, on lance l'évaluation globale
     if os.path.isdir(args.input):
-        evaluate_directory(model, class_mapping, args.input)
+        evaluate_directory(model, class_mapping, args.input, args.percentage)
     # Sinon, on effectue la prédiction sur une seule image avec affichage
     elif os.path.isfile(args.input):
         img_preprocessed, transformed_img = preprocess_image(args.input)
