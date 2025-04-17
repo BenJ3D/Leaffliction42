@@ -1,5 +1,13 @@
 import os
 import sys
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # 0=DEBUG, 1=INFO, 2=WARNING, 3=ERROR
+# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # Désactive l'utilisation de CUDA
+# os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'  # Empêche TF de préallouer toute la mémoire
+
+# Rediriger temporairement stderr pour supprimer les messages initiaux d'erreur
+# original_stderr = sys.stderr
+# sys.stderr = open(os.devnull, 'w')
+
 import argparse
 import json
 import numpy as np
@@ -10,10 +18,10 @@ from tensorflow import keras
 from Transformation import gaussian_blur, create_masked_image, _create_binary_mask
 from tqdm import tqdm
 
+
 # Taille des images attendue par le modèle (doit correspondre à l'entraînement)
 IMG_SIZE = 256
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 class CustomArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f"Erreur: {message}\n")
