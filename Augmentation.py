@@ -230,8 +230,8 @@ def augment_dataset_balanced(input_directory, output_directory):
                     base_name, ext = os.path.splitext(img_name)
                     output_file = os.path.join(
                         category_output_path,
-                        f"{base_name}_{aug_name}_{aug_index //
-                                                  len(augmentations)}{ext}",
+                        f"{base_name}_{aug_name}_\
+                            {aug_index // len(augmentations)}{ext}",
                     )
                     aug_img.save(output_file)
                     needed -= 1
